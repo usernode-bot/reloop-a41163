@@ -1,4 +1,18 @@
 {
   "description": "Digital waste bank app for neighborhoods to track and manage recyclable waste",
-  "secrets": []
+  "secrets": [],
+  "tests": [
+    {
+      "id": "main.start",
+      "name": "Main screen renders",
+      "path": "/",
+      "expectText": "Create household",
+      "visual": true,
+      "impact": [
+        "public/index.html",
+        "server.js",
+        "styles/tailwind-input.css"
+      ]
+    }
+  ]
 }

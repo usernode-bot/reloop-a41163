@@ -154,29 +154,174 @@ app.get('/health', (_req, res) => res.json({ status: 'ok' }));
 // fresh load.
 app.get('/favicon.ico', (_req, res) => res.status(204).end());
 
-// Button press
-app.post('/api/press', async (req, res) => {
+// The five waste types a deposit can be. Stored lowercase; the screen
+// capitalises them for display.
+const WASTE_TYPES = ['plastic', 'paper', 'metal', 'glass', 'other'];
+
+// Households, newest first, with a member count so neighbours can tell two
+// same-named households apart. Guests may read this: the join list on the
+// start card is how someone finds their household before they have one.
+app.get('/api/households', async (_req, res) => {
   try {
-    await pool.query(`
-      INSERT INTO presses (user_id, username) VALUES ($1, $2)
-    `, [req.user.id, req.user.username]);
-    res.json({ ok: true });
+    const { rows } = await pool.query(`
+      SELECT h.id, h.name, COUNT(m.id)::int AS member_count
+      FROM households h
+      LEFT JOIN members m ON m.household_id = h.id
+      GROUP BY h.id, h.name
+      ORDER BY h.created_at DESC, h.id DESC
+    `);
+    res.json({ households: rows });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// Leaderboard
-app.get('/api/leaderboard', async (_req, res) => {
+// Run fn inside a transaction, rolling back if it throws.
+async function withTx(fn) {
+  const client = await pool.connect();
   try {
+    await client.query('BEGIN');
+    const result = await fn(client);
+    await client.query('COMMIT');
+    return result;
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+// Create a household. The creator becomes its first member in the same
+// transaction, so a household can never exist without a member. Duplicate
+// names are allowed: the id, not the name, is the key.
+app.post('/api/households', async (req, res) => {
+  const name = typeof (req.body && req.body.name) === 'string' ? req.body.name.trim() : '';
+  if (!name || name.length > 120) {
+    return res.status(400).json({ error: 'Household name must be 1 to 120 characters.' });
+  }
+  try {
+    const id = await withTx(async (client) => {
+      const mine = await client.query('SELECT 1 FROM members WHERE user_id = $1', [req.user.id]);
+      if (mine.rowCount) {
+        throw Object.assign(new Error('You are already in a household.'), { status: 400 });
+      }
+      const hh = await client.query(
+        `INSERT INTO households (name, created_by, created_by_name)
+         VALUES ($1, $2, $3) RETURNING id`,
+        [name, req.user.id, req.user.username]
+      );
+      await client.query(
+        `INSERT INTO members (household_id, user_id, username) VALUES ($1, $2, $3)`,
+        [hh.rows[0].id, req.user.id, req.user.username]
+      );
+      return hh.rows[0].id;
+    });
+    res.status(201).json({ id, name });
+  } catch (err) {
+    if (err.status) return res.status(err.status).json({ error: err.message });
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Join an existing household. Everyone belongs to exactly one household;
+// members.user_id's UNIQUE constraint backs that up.
+app.post('/api/households/:id/join', async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) return res.status(404).json({ error: 'Household not found.' });
+  try {
+    const hh = await pool.query('SELECT id FROM households WHERE id = $1', [id]);
+    if (!hh.rowCount) return res.status(404).json({ error: 'Household not found.' });
+    const mine = await pool.query('SELECT 1 FROM members WHERE user_id = $1', [req.user.id]);
+    if (mine.rowCount) return res.status(400).json({ error: 'You are already in a household.' });
+    const inserted = await pool.query(
+      `INSERT INTO members (household_id, user_id, username)
+       VALUES ($1, $2, $3)
+       ON CONFLICT (user_id) DO NOTHING RETURNING id`,
+      [id, req.user.id, req.user.username]
+    );
+    if (!inserted.rowCount) return res.status(400).json({ error: 'You are already in a household.' });
+    res.status(201).json({ ok: true, household_id: id });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// The signed-in user's household, its members and their balances in one
+// payload. Guests and people without a household get `{ household: null }`.
+app.get('/api/my-household', async (req, res) => {
+  if (!req.user) return res.json({ household: null });
+  try {
+    const mine = await pool.query(
+      'SELECT household_id FROM members WHERE user_id = $1',
+      [req.user.id]
+    );
+    if (!mine.rowCount) return res.json({ household: null });
+    const householdId = mine.rows[0].household_id;
+    const hh = await pool.query('SELECT id, name FROM households WHERE id = $1', [householdId]);
+    if (!hh.rowCount) return res.json({ household: null });
+    // One row per member with their totals: 0 when they have no deposits
+    // yet. Points first, so the screen can show them highest first.
     const { rows } = await pool.query(`
-      SELECT username, COUNT(*) as presses
-      FROM presses
-      GROUP BY username
-      ORDER BY presses DESC
-      LIMIT 50
-    `);
-    res.json({ leaderboard: rows });
+      SELECT m.id, m.user_id, m.username,
+             COALESCE(SUM(d.points), 0)::int AS points,
+             COALESCE(SUM(d.weight_grams), 0)::int AS grams
+      FROM members m
+      LEFT JOIN deposits d ON d.member_id = m.id
+      WHERE m.household_id = $1
+      GROUP BY m.id, m.user_id, m.username
+      ORDER BY points DESC, m.username
+    `, [householdId]);
+    res.json({ household: hh.rows[0], members: rows, my_user_id: req.user.id });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Record a deposit: who brought the waste, what kind, how heavy. Deposits
+// are append-only; there is no edit or delete anywhere.
+app.post('/api/deposits', async (req, res) => {
+  const body = req.body || {};
+  const wasteType = typeof body.waste_type === 'string' ? body.waste_type.trim().toLowerCase() : '';
+  const weightKg = Number(body.weight_kg);
+  const memberId = Number(body.member_id);
+
+  if (!WASTE_TYPES.includes(wasteType)) {
+    return res.status(400).json({ error: 'Waste type must be Plastic, Paper, Metal, Glass or Other.' });
+  }
+  if (!Number.isFinite(weightKg) || weightKg <= 0 || weightKg > 500) {
+    return res.status(400).json({ error: 'Weight must be more than 0 and at most 500 kg.' });
+  }
+  if (!Number.isInteger(memberId)) {
+    return res.status(400).json({ error: 'Pick a member of your household.' });
+  }
+  // Weights live in the database as whole grams, never floats; points are 1
+  // per full kilogram and fractions do not carry over between deposits.
+  const weightGrams = Math.round(weightKg * 1000);
+  const points = Math.floor(weightGrams / 1000);
+  try {
+    // The member must exist and share a household with the caller; anything
+    // else is a 400 and writes nothing.
+    const member = await pool.query(
+      `SELECT m.id, m.household_id
+       FROM members m
+       JOIN members me ON me.household_id = m.household_id AND me.user_id = $2
+       WHERE m.id = $1`,
+      [memberId, req.user.id]
+    );
+    if (!member.rowCount) {
+      return res.status(400).json({ error: 'That member is not in your household.' });
+    }
+    const { rows } = await pool.query(
+      `INSERT INTO deposits
+         (household_id, member_id, waste_type, weight_grams, points, recorded_by, recorded_by_name)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       RETURNING id, household_id, member_id, waste_type, weight_grams, points,
+                 recorded_by, recorded_by_name, created_at`,
+      [member.rows[0].household_id, memberId, wasteType, weightGrams, points,
+       req.user.id, req.user.username]
+    );
+    res.status(201).json(rows[0]);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -219,15 +364,97 @@ app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
+// Staging seed ("Staging mock data" in the platform conventions): two
+// obviously fake households with fake members and deposits, so the screen
+// can be seen populated. Only fake identities, never a real user; inserted
+// only while the households table is empty, so it runs once per database
+// and is never a signal app logic reads. Production starts empty.
+async function seedStaging() {
+  const { rows } = await pool.query('SELECT COUNT(*)::int AS n FROM households');
+  if (rows[0].n > 0) return;
+  const hh = await pool.query(
+    `INSERT INTO households (name, created_by, created_by_name) VALUES
+       ('Staging demo: RT 04 Anggrek', -1, 'Demo Bu Sari'),
+       ('Staging demo: RW 07 Mawar', -2, 'Demo Pak Budi')
+     RETURNING id, name`
+  );
+  const ids = Object.fromEntries(hh.rows.map((r) => [r.name, r.id]));
+  const anggrek = ids['Staging demo: RT 04 Anggrek'];
+  const mawar = ids['Staging demo: RW 07 Mawar'];
+  await pool.query(
+    `INSERT INTO members (household_id, user_id, username) VALUES
+       ($1, -1, 'Demo Bu Sari'),
+       ($1, -3, 'Demo Pak Darsi'),
+       ($1, -4, 'Demo Mita'),
+       ($2, -2, 'Demo Pak Budi'),
+       ($2, -5, 'Demo Yuni')
+     ON CONFLICT (user_id) DO NOTHING`,
+    [anggrek, mawar]
+  );
+  const { rows: demoMembers } = await pool.query(
+    'SELECT id, user_id, username, household_id FROM members WHERE user_id < 0'
+  );
+  const byUser = Object.fromEntries(demoMembers.map((m) => [m.user_id, m]));
+  // [member user_id, waste_type, weight in grams]
+  const demoDeposits = [
+    [-1, 'plastic', 3400],
+    [-3, 'paper', 5200],
+    [-4, 'metal', 1800],
+    [-1, 'glass', 2100],
+    [-4, 'other', 900],
+    [-2, 'plastic', 6000],
+    [-5, 'paper', 4500],
+    [-2, 'metal', 2200],
+    [-5, 'glass', 1100],
+  ];
+  for (const [userId, wasteType, weightGrams] of demoDeposits) {
+    const member = byUser[userId];
+    if (!member) continue;
+    await pool.query(
+      `INSERT INTO deposits
+         (household_id, member_id, waste_type, weight_grams, points, recorded_by, recorded_by_name)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+      [member.household_id, member.id, wasteType, weightGrams,
+       Math.floor(weightGrams / 1000), userId, member.username]
+    );
+  }
+}
+
 async function start() {
+  // All three tables are append-only: there is no UPDATE or DELETE anywhere
+  // in this app. Every deposit a household makes is permanent.
   await pool.query(`
-    CREATE TABLE IF NOT EXISTS presses (
+    CREATE TABLE IF NOT EXISTS households (
       id SERIAL PRIMARY KEY,
-      user_id INTEGER NOT NULL,
+      name VARCHAR(120) NOT NULL,
+      created_by INTEGER NOT NULL,
+      created_by_name VARCHAR(255) NOT NULL,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS members (
+      id SERIAL PRIMARY KEY,
+      household_id INTEGER NOT NULL REFERENCES households(id),
+      user_id INTEGER NOT NULL UNIQUE,
       username VARCHAR(255) NOT NULL,
       created_at TIMESTAMPTZ DEFAULT NOW()
     )
   `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS deposits (
+      id SERIAL PRIMARY KEY,
+      household_id INTEGER NOT NULL REFERENCES households(id),
+      member_id INTEGER NOT NULL REFERENCES members(id),
+      waste_type VARCHAR(16) NOT NULL,
+      weight_grams INTEGER NOT NULL,
+      points INTEGER NOT NULL,
+      recorded_by INTEGER NOT NULL,
+      recorded_by_name VARCHAR(255) NOT NULL,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `);
+  if (IS_STAGING) await seedStaging();
   const server = app.listen(port, () => console.log(`Listening on :${port}`));
   // Let Envoy retire idle upstream connections at 60s, with a 15s margin.
   server.keepAliveTimeout = 75_000;

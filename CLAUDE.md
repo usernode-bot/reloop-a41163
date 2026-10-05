@@ -100,24 +100,28 @@ tables you've marked private), etc.
 
 ## About ReLoop
 
-Digital waste bank app for neighborhoods to track and manage recyclable waste
-
-_(add a sentence or two more of product context here so Claude Code has a
-shared understanding of what this app is for)_
+Digital waste bank app for neighborhoods to track and manage recyclable waste.
+Each household keeps a waste bank book: members deposit plastic, paper,
+metal, glass or other waste by weight, the app converts each deposit to
+points (1 per full kilogram), and everyone sees the members' running
+balances, replacing the ledger waste banks usually keep on paper.
 
 ## Design
 
 This app's look. The first real version fills in the blanks; every later
 change follows it, and updates it when a request changes the look on purpose.
 
-- **Palette:** _(name the accent, any second colour and the neutrals, e.g.
-  "accent: tomato red; second: basil green; neutrals: warm greys")_
-- **Signature element:** _(the one thing on screen drawn from this app's
-  subject, which no other app would have)_
+- **Palette:** the kit's defaults, kept: accent teal, warm stone neutrals.
+  Both looks already pass contrast; do not introduce other colours.
+- **Signature element:** the small circular-arrows loop mark beside the
+  "ReLoop" title (inline SVG in the accent colour), echoing recycling.
+  Nothing else on screen is decorative.
 - **Type scale:** `text-title`, `text-heading`, `text-body`, `text-small`
-  _(change their sizes in `tailwind.config.js` if you must, not their number)_
-- **One fixed look:** _(only for an app drawn as its own scene, such as a
-  game: which look, and why. Otherwise delete this line.)_
+  (unchanged; do not change their sizes in `tailwind.config.js`).
+- Words: Household, Member, Waste type, Weight (kg), Deposit, Points,
+  Balances. Waste types are always written Plastic, Paper, Metal, Glass,
+  Other. Kilograms show one decimal ("3.4 kg"); points are whole numbers
+  ("12 points").
 
 The kit is in `styles/tailwind-input.css`: colour tokens with a light and
 a dark value (named in `tailwind.config.js`), and a few components
@@ -139,6 +143,15 @@ Re-theme by changing the token values there, keeping every text pair at
 
 ## App-specific conventions
 
-_(optional — e.g. "all currency values stored as integer cents, not
-floats"; "the `posts` table is append-only"; "avoid adding new
-dependencies"; etc.)_
+- Weights are stored as integer grams (`deposits.weight_grams`), never
+  floats; the screen converts to kilograms for display.
+- `households`, `members` and `deposits` are append-only: no `UPDATE` or
+  `DELETE` anywhere. A deposit, once written, is permanent.
+- Points are `Math.floor(weight_grams / 1000)` at insert time — 1 per full
+  kilogram; a deposit under a full kilogram earns no points yet, and
+  fractions do not carry over between deposits.
+- Waste types are exactly `plastic`, `paper`, `metal`, `glass`, `other`
+  (stored lowercase).
+- Everyone belongs to exactly one household (`members.user_id` is UNIQUE);
+  there is no leaving or switching household yet.
+- Avoid adding new dependencies.
