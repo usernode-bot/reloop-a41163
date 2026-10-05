@@ -102,22 +102,31 @@ tables you've marked private), etc.
 
 Digital waste bank app for neighborhoods to track and manage recyclable waste
 
-_(add a sentence or two more of product context here so Claude Code has a
-shared understanding of what this app is for)_
+ReLoop ("Return. Reuse. Reward.") is the deposit book of a bank sampah — an
+Indonesian RT/RW neighborhood waste bank — in app form. Residents bring
+sorted waste to the waste bank, the waste bank manager weighs it and records
+the deposit, points land in the resident's balance, and points are redeemed
+for rewards picked up at the waste bank. The manager owns the prices, the
+roster and the catalog; residents own their history and balance.
 
 ## Design
 
 This app's look. The first real version fills in the blanks; every later
 change follows it, and updates it when a request changes the look on purpose.
 
-- **Palette:** _(name the accent, any second colour and the neutrals, e.g.
-  "accent: tomato red; second: basil green; neutrals: warm greys")_
-- **Signature element:** _(the one thing on screen drawn from this app's
-  subject, which no other app would have)_
+- **Palette:** the kit's defaults, kept: one teal accent on warm neutrals
+  (stone greys); danger red for errors only. Suits the recycling subject —
+  no re-theming was wanted.
+- **Signature element:** the Home points card — a full-width card with the
+  balance in `text-title` and a small looping-arrows mark, reading like the
+  deposit book of a bank sampah.
 - **Type scale:** `text-title`, `text-heading`, `text-body`, `text-small`
   _(change their sizes in `tailwind.config.js` if you must, not their number)_
-- **One fixed look:** _(only for an app drawn as its own scene, such as a
-  game: which look, and why. Otherwise delete this line.)_
+- Navigation is a bottom tab bar (`.tab-nav`/`.tab-btn`, the kit's only added
+  component): Home, Deposits, Rewards, Profile, plus Admin for managers.
+  Statuses are `bg-raised` pill badges; the words are fixed: Points, deposit,
+  waste type, price, reward, redeem, redemption, stock, balance, member,
+  waste bank manager, void.
 
 The kit is in `styles/tailwind-input.css`: colour tokens with a light and
 a dark value (named in `tailwind.config.js`), and a few components
@@ -139,6 +148,27 @@ Re-theme by changing the token values there, keeping every text pair at
 
 ## App-specific conventions
 
-_(optional — e.g. "all currency values stored as integer cents, not
-floats"; "the `posts` table is append-only"; "avoid adding new
-dependencies"; etc.)_
+- **Integers only for points and weights.** Point values are integers;
+  weights are stored as **integer grams** in `deposit_items.weight_g`. UI
+  inputs are kilograms with decimals and convert to grams; never store a
+  float.
+- **Points are computed server-side** at record time:
+  `points = floor(weight_g × points_per_kg / 1000)`, snapshotted onto
+  `deposit_items` and `deposits`. Price edits never reprice history.
+- **Every balance change writes a `point_transactions` ledger row in the
+  same transaction** as the balance update. Balances never go negative:
+  voids and refunds check the balance first.
+- **Private tables:** `members`, `deposits`, `deposit_items`, `redemptions`,
+  `point_transactions` are `staging:private` (balances are financial data,
+  phone numbers personal). `waste_types` and `rewards` stay public. No
+  leaderboard: it would rank neighbors' balances in public.
+- **The first waste bank manager** promotes themselves once with
+  `ADMIN_SETUP_CODE` (a dapp.json secret) on the Profile screen; after that,
+  managers promote/demote each other, and self-demotion is refused so the
+  neighborhood can't lock itself out of admin.
+- **Deposits are recorded by managers only**; residents never record their
+  own (no self-reporting in the MVP).
+- **One neighborhood per app instance** — no multi-bank support; don't add a
+  bank/waste-bank dimension to the schema without revisiting every table.
+- UI copy is English with Indonesian domain terms (bank sampah, RT/RW); a
+  full Bahasa Indonesia pass would go through `req.user.locale`.
