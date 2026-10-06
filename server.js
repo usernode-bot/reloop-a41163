@@ -204,6 +204,9 @@ async function migrate() {
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `);
+  // 'kg' types are priced per kilogram; 'item' types (usable goods) per piece.
+  // points_per_kg holds the price per unit either way.
+  await pool.query(`ALTER TABLE waste_types ADD COLUMN IF NOT EXISTS unit TEXT NOT NULL DEFAULT 'kg'`);
   await pool.query(`
     CREATE TABLE IF NOT EXISTS rewards (
       id SERIAL PRIMARY KEY,
@@ -248,6 +251,8 @@ async function migrate() {
       points INTEGER NOT NULL DEFAULT 0
     )
   `);
+  // Piece count for per-item lines (weight_g is 0 on those); NULL on kg lines.
+  await pool.query(`ALTER TABLE deposit_items ADD COLUMN IF NOT EXISTS quantity INTEGER`);
   await pool.query(`
     CREATE TABLE IF NOT EXISTS redemptions (
       id SERIAL PRIMARY KEY,
@@ -302,6 +307,10 @@ async function seedStaging() {
       [id, name, ppk]
     );
   }
+  await pool.query(
+    `INSERT INTO waste_types (id, name, points_per_kg, unit) VALUES (900007, 'Staging demo: Used clothes (per item)', 15, 'item')
+     ON CONFLICT (id) DO NOTHING`
+  );
   const rewards = [
     [900001, 'Staging demo reward: Rice 1 kg', 500, 20],
     [900002, 'Staging demo reward: Cooking oil 1 L', 300, 10],
@@ -428,8 +437,12 @@ async function withTx(fn) {
 
 // Points for one deposit line, computed SERVER-side from the current price:
 // `floor(weight_g × points_per_kg / 1000)`. The client only previews this.
+// Per-item types instead use `quantity × points_per_item`.
 function pointsFor(weightG, pointsPerKg) {
   return Math.floor((weightG * pointsPerKg) / 1000);
+}
+function cleanUnit(v) {
+  return v === 'item' ? 'item' : 'kg';
 }
 
 function getMemberByUser(userId) {
@@ -556,7 +569,7 @@ app.get('/api/waste-types', async (req, res, next) => {
     const me = req.user ? await getMemberByUser(req.user.id) : null;
     const showAll = !!(me && me.is_admin) && req.query.all === '1';
     const { rows } = await pool.query(`
-      SELECT id, name, points_per_kg, active FROM waste_types
+      SELECT id, name, points_per_kg, unit, active FROM waste_types
       ${showAll ? '' : 'WHERE active = TRUE'}
       ORDER BY name
     `);
@@ -571,8 +584,8 @@ app.post('/api/waste-types', requireAdmin, async (req, res, next) => {
     if (!name) throw new ApiError(400, 'name_required');
     if (ppk === null) throw new ApiError(400, 'invalid_points_per_kg');
     const { rows } = await pool.query(
-      `INSERT INTO waste_types (name, points_per_kg) VALUES ($1, $2) RETURNING id, name, points_per_kg, active`,
-      [name, ppk]
+      `INSERT INTO waste_types (name, points_per_kg, unit) VALUES ($1, $2, $3) RETURNING id, name, points_per_kg, unit, active`,
+      [name, ppk, cleanUnit(req.body.unit)]
     );
     res.status(201).json({ waste_type: rows[0] });
   } catch (err) { next(err); }
@@ -584,16 +597,18 @@ app.patch('/api/waste-types/:id', requireAdmin, async (req, res, next) => {
     const name = cleanText(req.body.name, 120);
     const ppk = 'points_per_kg' in req.body ? cleanInt(req.body.points_per_kg, 0, 1000000) : undefined;
     const active = 'active' in req.body ? !!req.body.active : undefined;
+    const unit = 'unit' in req.body ? cleanUnit(req.body.unit) : null;
     if (req.body.name !== undefined && !name) throw new ApiError(400, 'name_required');
     if (ppk === null) throw new ApiError(400, 'invalid_points_per_kg');
     const { rows } = await pool.query(`
       UPDATE waste_types SET
         name = COALESCE($2, name),
         points_per_kg = COALESCE($3, points_per_kg),
-        active = COALESCE($4, active)
+        active = COALESCE($4, active),
+        unit = COALESCE($5, unit)
       WHERE id = $1
-      RETURNING id, name, points_per_kg, active
-    `, [id, name, ppk === undefined ? null : ppk, active === undefined ? null : active]);
+      RETURNING id, name, points_per_kg, unit, active
+    `, [id, name, ppk === undefined ? null : ppk, active === undefined ? null : active, unit]);
     if (!rows.length) throw new ApiError(404, 'waste_type_not_found');
     res.json({ waste_type: rows[0] });
   } catch (err) { next(err); }
@@ -720,7 +735,7 @@ async function fetchDeposits(where, params, limit) {
   let items = [];
   if (rows.length) {
     const ir = await pool.query(
-      `SELECT deposit_id, waste_type_id, label, weight_g, points
+      `SELECT deposit_id, waste_type_id, label, weight_g, quantity, points
        FROM deposit_items WHERE deposit_id = ANY($1) ORDER BY id`,
       [rows.map(r => r.id)]
     );
@@ -782,7 +797,7 @@ app.post('/api/deposits', requireAdmin, async (req, res, next) => {
     const typeIds = rawItems.map(i => cleanInt(i && i.waste_type_id, 1, 2147483647));
     if (typeIds.some(t => t === null)) throw new ApiError(400, 'invalid_item');
     const types = await pool.query(
-      `SELECT id, name, points_per_kg FROM waste_types WHERE id = ANY($1) AND active = TRUE`,
+      `SELECT id, name, points_per_kg, unit FROM waste_types WHERE id = ANY($1) AND active = TRUE`,
       [typeIds]
     );
     const byId = new Map(types.rows.map(t => [t.id, t]));
@@ -790,9 +805,15 @@ app.post('/api/deposits', requireAdmin, async (req, res, next) => {
     for (const item of rawItems) {
       const t = byId.get(cleanInt(item.waste_type_id, 1, 2147483647));
       if (!t) throw new ApiError(400, 'waste_type_unavailable');
+      if (t.unit === 'item') {
+        const quantity = cleanInt(item.quantity, 1, 1000000);
+        if (quantity === null) throw new ApiError(400, 'invalid_quantity');
+        prepared.push({ waste_type_id: t.id, label: t.name, weight_g: 0, quantity, points: quantity * t.points_per_kg });
+        continue;
+      }
       const weightG = cleanInt(item.weight_g, 1, 1000000000);
       if (weightG === null) throw new ApiError(400, 'invalid_weight');
-      prepared.push({ waste_type_id: t.id, label: t.name, weight_g: weightG, points: pointsFor(weightG, t.points_per_kg) });
+      prepared.push({ waste_type_id: t.id, label: t.name, weight_g: weightG, quantity: null, points: pointsFor(weightG, t.points_per_kg) });
     }
     const total = prepared.reduce((s, i) => s + i.points, 0);
     const result = await withTx(async (client) => {
@@ -807,8 +828,8 @@ app.post('/api/deposits', requireAdmin, async (req, res, next) => {
       const depositId = d.rows[0].id;
       for (const it of prepared) {
         await client.query(
-          `INSERT INTO deposit_items (deposit_id, waste_type_id, label, weight_g, points) VALUES ($1, $2, $3, $4, $5)`,
-          [depositId, it.waste_type_id, it.label, it.weight_g, it.points]
+          `INSERT INTO deposit_items (deposit_id, waste_type_id, label, weight_g, quantity, points) VALUES ($1, $2, $3, $4, $5, $6)`,
+          [depositId, it.waste_type_id, it.label, it.weight_g, it.quantity, it.points]
         );
       }
       const up = await client.query(
@@ -999,13 +1020,13 @@ app.get('/api/report', requireAdmin, async (req, res, next) => {
       `),
       // Per waste type, grouped by the label snapshotted at record time.
       pool.query(`
-        SELECT i.label, SUM(i.weight_g) AS weight_g, SUM(i.points) AS points,
+        SELECT i.label, SUM(i.weight_g) AS weight_g, SUM(i.quantity) AS quantity, SUM(i.points) AS points,
                COUNT(DISTINCT i.deposit_id) AS deposits
         FROM deposit_items i
         JOIN deposits d ON d.id = i.deposit_id
         WHERE d.voided = FALSE
         GROUP BY i.label
-        ORDER BY SUM(i.weight_g) DESC
+        ORDER BY SUM(i.weight_g) DESC, SUM(i.points) DESC
       `),
       // Members, redemption and ledger-side figures in one pass.
       pool.query(`
@@ -1028,6 +1049,7 @@ app.get('/api/report', requireAdmin, async (req, res, next) => {
         by_type: byType.rows.map(r => ({
           label: r.label,
           weight_g: parseInt(r.weight_g, 10),
+          quantity: r.quantity === null ? null : parseInt(r.quantity, 10),
           points: parseInt(r.points, 10),
           deposits: parseInt(r.deposits, 10),
         })),
