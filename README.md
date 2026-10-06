@@ -34,6 +34,9 @@ prices, manage the roster and the reward catalog, and hand out redemptions.
 - **Rewards** — the catalog: name, points cost, stock, show/hide.
 - **Redemption queue** — mark pickups as handed over, or cancel (refund +
   restock).
+- **Report** — the neighborhood at a glance: total waste collected, points
+  issued and redeemed, the roster size, and a per-waste-type rollup. Voided
+  deposits count nowhere.
 
 ## Becoming the first manager
 
@@ -58,7 +61,7 @@ in the app. After that, managers manage each other from the Members screen.
 ## Out of scope for the MVP
 
 Multiple waste banks per app instance, Rupiah/cash payouts, photo proof and
-QR check-in, pickup scheduling, notifications, reports/exports, resident
+QR check-in, pickup scheduling, notifications, exports, resident
 self-reporting of deposits, and offline mode.
 
 ## Running it

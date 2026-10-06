@@ -285,7 +285,8 @@ async function migrate() {
 // fixed high ids so real rows can never collide. Never references a real
 // user: the visitor's own member row is created lazily with 0 points, which
 // is the honest production state. Balances below match the seeded ledger
-// exactly (deposits 284 − redemptions 180 = 104 for the demo user).
+// exactly (deposits 284 − redemptions 180 = 104 for the demo user; the
+// voided deposit's +32/−32 pair nets to zero).
 async function seedStaging() {
   const wasteTypes = [
     [900001, 'Staging demo: PET plastic bottles', 15],
@@ -374,6 +375,28 @@ async function seedStaging() {
       `INSERT INTO point_transactions (member_id, delta, reason, ref_type, ref_id, created_at)
        VALUES ($1, $2, 'redemption', 'redemption', $3, NOW() - ($4 || ' days')::interval)`,
       [memberId, -cost, id, daysAgo]
+    );
+  }
+  // One voided deposit so staging shows that voids are excluded from the
+  // report: its +32/−32 ledger pair nets to zero, so the demo balance (104)
+  // and the report totals (29,300 g / 408 pts) are unchanged.
+  const voidIns = await pool.query(
+    `INSERT INTO deposits (id, member_id, recorded_by, total_points, voided, voided_at, created_at)
+     VALUES (900107, 900002, 900001, 32, TRUE, NOW() - make_interval(days => 3), NOW() - make_interval(days => 3))
+     ON CONFLICT (id) DO NOTHING RETURNING id`
+  );
+  if (voidIns.rows.length) {
+    await pool.query(
+      `INSERT INTO deposit_items (deposit_id, waste_type_id, label, weight_g, points)
+       VALUES (900107, 900004, 'Staging demo: Aluminium cans', 800, 32)`
+    );
+    await pool.query(
+      `INSERT INTO point_transactions (member_id, delta, reason, ref_type, ref_id, created_at)
+       VALUES (900002, 32, 'deposit', 'deposit', 900107, NOW() - make_interval(days => 3))`
+    );
+    await pool.query(
+      `INSERT INTO point_transactions (member_id, delta, reason, ref_type, ref_id, created_at)
+       VALUES (900002, -32, 'void', 'deposit', 900107, NOW() - make_interval(days => 3))`
     );
   }
   // Explicit ids bypass the sequences; push each sequence past the highest
@@ -954,6 +977,62 @@ app.patch('/api/members/:id', requireAdmin, async (req, res, next) => {
       SELECT m.id, m.username, m.display_name, m.house_no, m.phone, m.is_admin, m.points_balance FROM members m WHERE id = $1
     `, [id]);
     res.json({ member: memberJson(updated.rows[0]) });
+  } catch (err) { next(err); }
+});
+
+// ── Report (admin) ──────────────────────────────────────────────────────────
+
+// Neighborhood-level aggregates for the manager's Report tab. Voided
+// deposits count nowhere; by_type groups on the price-name snapshot
+// (deposit_items.label) so retired waste types still show their history.
+app.get('/api/report', requireAdmin, async (req, res, next) => {
+  try {
+    const [dep, byType, misc] = await Promise.all([
+      // Waste, points and active members across all live deposits.
+      pool.query(`
+        SELECT COALESCE(SUM(i.weight_g), 0) AS waste_g,
+               COALESCE(SUM(i.points), 0) AS points_issued,
+               COUNT(DISTINCT d.member_id) AS members_active
+        FROM deposit_items i
+        JOIN deposits d ON d.id = i.deposit_id
+        WHERE d.voided = FALSE
+      `),
+      // Per waste type, grouped by the label snapshotted at record time.
+      pool.query(`
+        SELECT i.label, SUM(i.weight_g) AS weight_g, SUM(i.points) AS points,
+               COUNT(DISTINCT i.deposit_id) AS deposits
+        FROM deposit_items i
+        JOIN deposits d ON d.id = i.deposit_id
+        WHERE d.voided = FALSE
+        GROUP BY i.label
+        ORDER BY SUM(i.weight_g) DESC
+      `),
+      // Members, redemption and ledger-side figures in one pass.
+      pool.query(`
+        SELECT (SELECT COUNT(*) FROM members) AS members_total,
+               (SELECT COALESCE(SUM(points_balance), 0) FROM members) AS points_in_circulation,
+               (SELECT COALESCE(SUM(points_spent), 0) FROM redemptions WHERE status = 'picked_up') AS points_redeemed,
+               (SELECT COALESCE(SUM(points_spent), 0) FROM redemptions WHERE status = 'pending') AS points_pending
+      `),
+    ]);
+    const m = misc.rows[0];
+    res.json({
+      report: {
+        waste_g: parseInt(dep.rows[0].waste_g, 10),
+        points_issued: parseInt(dep.rows[0].points_issued, 10),
+        members_active: parseInt(dep.rows[0].members_active, 10),
+        members_total: parseInt(m.members_total, 10),
+        points_in_circulation: parseInt(m.points_in_circulation, 10),
+        points_redeemed: parseInt(m.points_redeemed, 10),
+        points_pending: parseInt(m.points_pending, 10),
+        by_type: byType.rows.map(r => ({
+          label: r.label,
+          weight_g: parseInt(r.weight_g, 10),
+          points: parseInt(r.points, 10),
+          deposits: parseInt(r.deposits, 10),
+        })),
+      },
+    });
   } catch (err) { next(err); }
 });
 
