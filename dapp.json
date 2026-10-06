@@ -1,4 +1,41 @@
 {
   "description": "Digital waste bank app for neighborhoods to track and manage recyclable waste",
-  "secrets": []
+  "secrets": [
+    {
+      "key": "ADMIN_SETUP_CODE",
+      "description": "One-time setup code the neighborhood's first waste bank manager enters on the Profile screen to claim the manager role. Leave the value empty to disable manager setup entirely.",
+      "required": true,
+      "private": true,
+      "staging_default": "staging-demo-setup"
+    }
+  ],
+  "tests": [
+    {
+      "name": "Home renders the points card",
+      "path": "/",
+      "expectText": "Points"
+    },
+    {
+      "name": "Rewards catalog renders with stock",
+      "path": "/#/rewards",
+      "expectText": "Staging demo reward"
+    },
+    {
+      "name": "Deposits shows the honest empty state",
+      "path": "/#/deposits",
+      "expectText": "No deposits yet"
+    },
+    {
+      "name": "Profile renders",
+      "path": "/#/profile",
+      "expectText": "Profile"
+    },
+    {
+      "id": "resident-browse",
+      "name": "Resident browse: home and rewards",
+      "path": "/",
+      "visual": true,
+      "impact": ["public/**", "server.js"]
+    }
+  ]
 }

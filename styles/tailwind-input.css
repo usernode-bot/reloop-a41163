@@ -109,6 +109,19 @@
     @apply mb-2 px-1 text-small font-medium text-muted;
   }
 
+  /* The bottom tab bar: the app's one fixed navigation. Each button is a
+     44 px+ target; the active tab ([aria-current="page"]) takes the accent. */
+  .tab-nav {
+    @apply fixed inset-x-0 bottom-0 z-20 border-t border-line bg-surface;
+  }
+  .tab-btn {
+    @apply flex min-h-14 flex-1 flex-col items-center justify-center gap-1 px-1 pt-2 text-small text-muted
+      focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-focus;
+  }
+  .tab-btn[aria-current='page'] {
+    @apply text-accent;
+  }
+
   /* The states of anything that loads data. Show exactly one at a time:
      - loading: .skeleton shapes where the data will be, never a blank;
      - empty, only when the load WORKED and found nothing: a title, one

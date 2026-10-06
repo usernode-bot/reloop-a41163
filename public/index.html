@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  
+
   <script>
   // usernode-dev-console@1
   (function () {
@@ -63,8 +63,8 @@
     try { post('info', ['[dev-console ready]'], { kind: 'ready' }); } catch (_) {}
   })();
   </script>
-  <title>ReLoop</title>
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><circle cx='50' cy='50' r='45' fill='%237c3aed'/><circle cx='50' cy='50' r='18' fill='white'/></svg>">
+  <title>ReLoop: Return. Reuse. Reward.</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><circle cx='50' cy='50' r='45' fill='%230f766e'/><path d='M30 40a22 22 0 0 1 40 0' stroke='white' stroke-width='9' fill='none' stroke-linecap='round'/><path d='M70 60a22 22 0 0 1-40 0' stroke='white' stroke-width='9' fill='none' stroke-linecap='round'/></svg>">
   <!-- Tailwind, PRECOMPILED for this app (was cdn.tailwindcss.com's
        in-browser engine plus an inline tailwind.config here). The config
        moved to tailwind.config.js in the repo root; npm run build compiles
@@ -108,156 +108,1298 @@
   </script>
 </head>
 <body class="min-h-screen bg-ground text-fg">
-  <!-- Built from the design kit in styles/tailwind-input.css: colour tokens
-       (bg-ground, text-muted, bg-accent, ...) that are right in both looks,
-       and components (btn-primary, list, card, state-empty, ...). The real
-       app keeps the kit; CLAUDE.md's "## Design" says how. -->
-  <main class="mx-auto flex max-w-md flex-col gap-8 px-4 py-10">
+  <main id="app" class="mx-auto flex min-h-screen max-w-md flex-col px-4 pb-28 pt-6"></main>
 
-    <!-- usernode-starter-notice@1 — starter-template messaging. When building
-         the user's real app, replace this whole screen and delete this block,
-         both sentinel comments included. -->
-    <section class="card flex flex-col items-start gap-3">
-      <span class="rounded-full bg-raised px-3 py-1 text-small font-medium text-muted">Starter template</span>
-      <h1 class="text-title">ReLoop</h1>
-      <p class="text-body text-muted">Welcome to your new app! Everything on this screen is placeholder content that came with it.</p>
-      <p class="text-body text-muted">To change this app, ask Homeroom bot: tap the <strong class="font-semibold text-fg">Homeroom icon</strong>, then <strong class="font-semibold text-fg">Suggest an improvement</strong>. Describe what you'd like in plain English, and it will be turned into your real app.</p>
-    </section>
-
-    <section>
-      <h2 class="section-label">What's already working</h2>
-      <ul class="list">
-        <li class="list-row items-start">
-          <svg class="mt-0.5 h-5 w-5 shrink-0 text-accent" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" d="M16.7 5.3a1 1 0 0 1 0 1.4l-7 7a1 1 0 0 1-1.4 0l-3-3a1 1 0 1 1 1.4-1.4L9 11.6l6.3-6.3a1 1 0 0 1 1.4 0Z" clip-rule="evenodd"/></svg>
-          <div>
-            <p class="text-body font-medium">Sign-in</p>
-            <p class="text-small text-muted">You're signed in through Homeroom automatically, with no accounts to build.</p>
-          </div>
-        </li>
-        <li class="list-row items-start">
-          <svg class="mt-0.5 h-5 w-5 shrink-0 text-accent" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" d="M16.7 5.3a1 1 0 0 1 0 1.4l-7 7a1 1 0 0 1-1.4 0l-3-3a1 1 0 1 1 1.4-1.4L9 11.6l6.3-6.3a1 1 0 0 1 1.4 0Z" clip-rule="evenodd"/></svg>
-          <div>
-            <p class="text-body font-medium">Database</p>
-            <p class="text-small text-muted">Your app has its own private database, ready to store things.</p>
-          </div>
-        </li>
-        <li class="list-row items-start">
-          <svg class="mt-0.5 h-5 w-5 shrink-0 text-accent" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" d="M16.7 5.3a1 1 0 0 1 0 1.4l-7 7a1 1 0 0 1-1.4 0l-3-3a1 1 0 1 1 1.4-1.4L9 11.6l6.3-6.3a1 1 0 0 1 1.4 0Z" clip-rule="evenodd"/></svg>
-          <div>
-            <p class="text-body font-medium">Live API</p>
-            <p class="text-small text-muted">The example below talks to a real server. Try it.</p>
-          </div>
-        </li>
-      </ul>
-    </section>
-    <!-- /usernode-starter-notice@1 -->
-
-    <section class="flex flex-col items-center gap-5">
-      <div class="w-full px-1">
-        <h2 class="text-heading">Try the example</h2>
-        <p class="text-small text-muted">This example will be replaced</p>
-      </div>
-
-      <button id="press-btn" class="btn-primary h-32 w-32 rounded-full text-title active:scale-95">Press!</button>
-
-      <p id="count" class="min-h-6 text-body text-muted"></p>
-
-      <div class="w-full">
-        <h3 class="section-label">Leaderboard</h3>
-        <!-- Anything that loads data shows exactly one of these at a time:
-             loading, the data, empty (it loaded, and there is nothing yet)
-             or error (it did not load). The script below switches them. -->
-        <div id="leaderboard-loading" role="status">
-          <span class="sr-only">Loading the leaderboard</span>
-          <div class="list">
-            <div class="list-row"><div class="skeleton h-4 w-1/2"></div></div>
-            <div class="list-row"><div class="skeleton h-4 w-1/3"></div></div>
-            <div class="list-row"><div class="skeleton h-4 w-2/5"></div></div>
-          </div>
-        </div>
-        <ol id="leaderboard" class="list" hidden></ol>
-        <div id="leaderboard-empty" class="state-empty" hidden>
-          <p class="text-heading">No presses yet</p>
-          <p class="text-body text-muted">Press the button to put your name on the board.</p>
-          <button id="leaderboard-press" class="btn-secondary">Press it</button>
-        </div>
-        <div id="leaderboard-error" class="state-error" hidden>
-          <svg class="h-6 w-6 text-danger" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" d="M18 10a8 8 0 1 1-16 0 8 8 0 0 1 16 0Zm-8-5a1 1 0 0 1 1 1v4a1 1 0 1 1-2 0V6a1 1 0 0 1 1-1Zm0 10a1 1 0 1 0 0-2 1 1 0 0 0 0 2Z" clip-rule="evenodd"/></svg>
-          <p class="text-heading">Couldn't load the leaderboard</p>
-          <p class="text-body text-muted">Pressing still works, and every press is saved.</p>
-          <button id="leaderboard-retry" class="btn-secondary">Retry</button>
-        </div>
-      </div>
-    </section>
-
-    <p class="text-center text-small text-muted">Built on Homeroom. This template screen disappears once you build your real app.</p>
-  </main>
+  <!-- The bottom tab bar. Buttons are 44 px+ targets; the active tab takes
+       the accent colour. The Admin tab appears only for waste bank managers. -->
+  <nav class="tab-nav" aria-label="Main">
+    <div id="tabbar" class="mx-auto flex max-w-md"></div>
+  </nav>
 
   <script>
+  (function () {
+    'use strict';
+
+    // ── Platform plumbing ──────────────────────────────────────────────────
+    // The iframe adds ?token=… on load; forward it on every fetch exactly
+    // like the starter template did.
     const params = new URLSearchParams(window.location.search);
-    const token = params.get('token') || '';
-    const headers = token ? { 'x-usernode-token': token } : {};
-    const count = document.getElementById('count');
+    const TOKEN = params.get('token') || '';
+    const HEADERS = Object.assign(
+      { 'Content-Type': 'application/json' },
+      TOKEN ? { 'x-usernode-token': TOKEN } : {}
+    );
 
-    // The leaderboard's states, one shown at a time. Empty only when the
-    // load worked and found nothing; a failure is the error state, never
-    // "No presses yet".
-    const views = {
-      loading: document.getElementById('leaderboard-loading'),
-      list: document.getElementById('leaderboard'),
-      empty: document.getElementById('leaderboard-empty'),
-      error: document.getElementById('leaderboard-error'),
-    };
-    function show(state) {
-      for (const [name, el] of Object.entries(views)) el.hidden = name !== state;
-    }
-
-    async function loadLeaderboard() {
-      let leaderboard;
-      try {
-        const res = await fetch('/api/leaderboard', { headers });
-        if (!res.ok) throw new Error('HTTP ' + res.status);
-        ({ leaderboard } = await res.json());
-      } catch {
-        show('error');
-        return;
+    async function api(path, opts) {
+      const res = await fetch(path, Object.assign({ headers: HEADERS }, opts || {}));
+      let data = null;
+      try { data = await res.json(); } catch (_) {}
+      if (!res.ok) {
+        const err = new Error((data && data.error) || ('HTTP ' + res.status));
+        err.status = res.status;
+        err.code = data && data.error;
+        err.data = data;
+        throw err;
       }
-      // People's names go in as text, never as HTML.
-      views.list.replaceChildren(...leaderboard.map((r, i) => {
-        const row = document.createElement('li');
-        row.className = 'list-row justify-between';
-        const name = document.createElement('span');
-        name.textContent = (i + 1) + '. ' + r.username;
-        const presses = document.createElement('span');
-        presses.className = 'tabular-nums text-muted';
-        presses.textContent = r.presses;
-        row.append(name, presses);
-        return row;
-      }));
-      const total = leaderboard.reduce((s, r) => s + parseInt(r.presses, 10), 0);
-      count.textContent = total + (total === 1 ? ' press so far' : ' presses so far');
-      show(leaderboard.length ? 'list' : 'empty');
+      return data;
     }
 
-    async function press() {
-      try {
-        const res = await fetch('/api/press', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', ...headers },
+    // ── Tiny DOM helpers ───────────────────────────────────────────────────
+    // Everything renders through textContent — member and reward names are
+    // other people's input and never become HTML.
+    function el(tag, cls, text) {
+      const e = document.createElement(tag);
+      if (cls) e.className = cls;
+      if (text !== undefined && text !== null) e.textContent = text;
+      return e;
+    }
+
+    function icon(paths, cls) {
+      const NS = 'http://www.w3.org/2000/svg';
+      const svg = document.createElementNS(NS, 'svg');
+      svg.setAttribute('viewBox', '0 0 24 24');
+      svg.setAttribute('fill', 'none');
+      svg.setAttribute('stroke', 'currentColor');
+      svg.setAttribute('stroke-width', '1.8');
+      svg.setAttribute('stroke-linecap', 'round');
+      svg.setAttribute('stroke-linejoin', 'round');
+      svg.setAttribute('aria-hidden', 'true');
+      if (cls) svg.setAttribute('class', cls);
+      for (const d of [].concat(paths)) {
+        const p = document.createElementNS(NS, 'path');
+        p.setAttribute('d', d);
+        svg.appendChild(p);
+      }
+      return svg;
+    }
+
+    const ICONS = {
+      home: ['M3 10.5 12 3l9 7.5', 'M5 9.5V21h14V9.5'],
+      deposits: ['M6 3h12a1 1 0 0 1 1 1v16l-2.5-1.5L14 20l-2-1.5L10 20l-2.5-1.5L5 20V4a1 1 0 0 1 1-1Z', 'M9 8h6', 'M9 12h6'],
+      rewards: ['M20 12v9H4v-9', 'M2 7h20v5H2Z', 'M12 22V7', 'M12 7c-1.5-3-6-3.5-6-1s4.5 3 6 1Z', 'M12 7c1.5-3 6-3.5 6-1s-4.5 3-6 1Z'],
+      profile: ['M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z', 'M5 21a7 7 0 0 1 14 0'],
+      admin: ['M12 3l7 3v5c0 4.5-3 8.5-7 10-4-1.5-7-5.5-7-10V6l7-3Z'],
+      loop: ['M17 2l4 4-4 4', 'M3 11v-1a4 4 0 0 1 4-4h14', 'M7 22l-4-4 4-4', 'M21 13v1a4 4 0 0 1-4 4H3'],
+      chevron: ['M9 6l6 6-6 6'],
+      alert: ['M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18Z', 'M12 8v5', 'M12 16h.01'],
+    };
+
+    // ── App state ──────────────────────────────────────────────────────────
+    const state = {
+      guest: false,
+      member: null,     // the signed-in member row (null for guests)
+      stats: null,      // { total_weight_g, deposit_count } for Home
+      setupConfigured: false,
+      isAdmin: false,
+      members: null,    // admin caches
+      wasteTypes: null,
+      adminTab: 'record',
+      record: null,     // in-progress "record deposit" form
+      memberFilter: '',
+    };
+
+    let mePromise = null;
+    function loadMe(force) {
+      if (!mePromise || force) {
+        mePromise = api('/api/me').then(d => {
+          state.guest = !!d.guest;
+          state.member = d.member || null;
+          state.stats = d.stats || null;
+          state.setupConfigured = !!d.setup_configured;
+          state.isAdmin = !!(d.member && d.member.is_admin);
+          if (force) state.members = null; // role may have changed
+        }).catch(() => { state.guest = true; state.member = null; state.isAdmin = false; });
+      }
+      return mePromise;
+    }
+
+    async function adminMembers(force) {
+      if (force || !state.members) state.members = (await api('/api/members')).members;
+      return state.members;
+    }
+    async function adminWasteTypes(force) {
+      if (force || !state.wasteTypes) state.wasteTypes = (await api('/api/waste-types?all=1')).waste_types;
+      return state.wasteTypes;
+    }
+
+    // ── Formatting ─────────────────────────────────────────────────────────
+    function fmt(n) { return Number(n).toLocaleString('en-US'); }
+    function kg(g) { return (Math.round((g / 1000) * 100) / 100).toLocaleString('en-US'); }
+    function fmtDate(iso) {
+      return new Date(iso).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
+    }
+    function displayName(m) { return (m && (m.display_name || m.username)) || 'Member'; }
+    const STATUS_LABEL = { pending: 'Waiting for pickup', picked_up: 'Picked up', cancelled: 'Cancelled' };
+
+    function badge(text) {
+      return el('span', 'rounded-full bg-raised px-2 py-0.5 text-small text-muted', text);
+    }
+    function banner(text, isError) {
+      return el('div', 'rounded-lg border px-4 py-3 text-small ' +
+        (isError ? 'border-danger/40 text-danger' : 'border-line bg-raised text-fg'), text);
+    }
+    function fieldRow(labelText, input) {
+      const wrap = el('label', 'flex flex-col gap-1');
+      wrap.append(el('span', 'px-1 text-small font-medium text-muted', labelText), input);
+      return wrap;
+    }
+    function textField() { const i = el('input', 'field'); i.type = 'text'; return i; }
+    function numberField(step) {
+      const i = el('input', 'field');
+      i.type = 'number'; i.step = step || '1'; i.min = '0';
+      return i;
+    }
+    function checkbox(labelText, checked) {
+      const wrap = el('label', 'flex min-h-11 items-center gap-3 px-1');
+      const box = el('input', 'h-5 w-5 accent-[rgb(var(--accent))]');
+      box.type = 'checkbox'; box.checked = !!checked;
+      wrap.append(box, el('span', 'text-body', labelText));
+      return { wrap, box };
+    }
+
+    // ── The four states of anything that loads data ────────────────────────
+    // Exactly one of loading / data / empty / error shows at a time. Empty
+    // only when the load worked and found nothing; a failure is the error
+    // state, never "nothing yet".
+    function makeStates(host, opts) {
+      opts = opts || {};
+      const loading = el('div', 'list');
+      loading.setAttribute('role', 'status');
+      loading.append(el('span', 'sr-only', opts.loadingText || 'Loading'));
+      for (const w of ['w-1/2', 'w-1/3', 'w-2/5']) {
+        const r = el('div', 'list-row');
+        r.append(el('div', 'skeleton h-4 ' + w));
+        loading.append(r);
+      }
+      const listEl = el('ul', 'list');
+      const emptyEl = el('div', 'state-empty');
+      const errorEl = el('div', 'state-error');
+      const retryBtn = el('button', 'btn-secondary', 'Retry');
+      retryBtn.type = 'button';
+      errorEl.append(
+        icon(ICONS.alert, 'h-6 w-6 text-danger'),
+        el('p', 'text-heading', opts.errorTitle || "Couldn't load this"),
+        el('p', 'text-body text-muted', opts.errorBody || 'Check your connection and try again.'),
+        retryBtn
+      );
+      const parts = [loading, listEl, emptyEl, errorEl];
+      for (const p of parts) host.append(p);
+      const api2 = {
+        show(name) {
+          for (const p of parts) p.hidden = true;
+          ({ loading: loading, list: listEl, empty: emptyEl, error: errorEl })[name].hidden = false;
+        },
+        setEmpty(title, body, extraNode) {
+          emptyEl.replaceChildren(
+            el('p', 'text-heading', title),
+            el('p', 'text-body text-muted', body)
+          );
+          if (extraNode) emptyEl.append(extraNode);
+        },
+        listEl: listEl,
+        retry: null,
+      };
+      retryBtn.addEventListener('click', () => { api2.show('loading'); if (api2.retry) api2.retry(); });
+      api2.show('loading');
+      return api2;
+    }
+
+    // ── Shared row builders ────────────────────────────────────────────────
+    function depositSummary(d) {
+      return d.items.map(i => i.label + ' ' + kg(i.weight_g) + ' kg').join(', ');
+    }
+
+    function depositDetails(d, opts) {
+      const li = el('li');
+      const det = el('details', 'group');
+      const sum = el('summary', 'list-row cursor-pointer items-start justify-between');
+      const left = el('div', 'min-w-0');
+      if (opts && opts.showMember) {
+        left.append(el('p', 'text-body font-medium', displayName(d.member)),
+          el('p', 'text-small text-muted', fmtDate(d.created_at) + ' · ' + depositSummary(d)));
+      } else {
+        left.append(el('p', 'text-body font-medium', fmtDate(d.created_at)),
+          el('p', 'text-small text-muted', depositSummary(d)));
+      }
+      const right = el('div', 'flex shrink-0 items-center gap-2 pt-0.5');
+      if (d.voided) {
+        right.append(badge('Voided'));
+      } else {
+        right.append(el('span', 'tabular-nums text-body font-medium', '+' + fmt(d.total_points)));
+      }
+      const chev = icon(ICONS.chevron, 'chev h-4 w-4 shrink-0 text-muted transition-transform group-open:rotate-90');
+      sum.append(left, right, chev);
+
+      const body = el('div', 'flex flex-col gap-2 border-t border-line px-4 py-3 text-small');
+      for (const i of d.items) {
+        const row = el('div', 'flex justify-between gap-3');
+        row.append(el('span', 'min-w-0', i.label + ' · ' + kg(i.weight_g) + ' kg'),
+          el('span', 'tabular-nums text-muted', fmt(i.points) + ' pts'));
+        body.append(row);
+      }
+      const total = el('div', 'flex justify-between gap-3 border-t border-line pt-2 font-medium');
+      total.append(el('span', '', 'Total'), el('span', 'tabular-nums', fmt(d.total_points) + ' pts'));
+      body.append(total);
+      const meta = el('p', 'text-muted', (d.voided ? 'Voided' : 'Recorded') + ' by @' +
+        (d.recorded_by_username || d.member.username) + ' on ' + fmtDate(d.created_at));
+      if (opts && opts.voidButton && !d.voided) {
+        const actions = el('div', 'flex justify-end border-t border-line pt-3');
+        const vb = el('button', 'btn-secondary', 'Void deposit');
+        vb.type = 'button';
+        vb.addEventListener('click', () => opts.voidButton(d));
+        actions.append(vb);
+        body.append(actions);
+      }
+      body.append(meta);
+      det.append(sum, body);
+      li.append(det);
+      return li;
+    }
+
+    function pointsColumn(cost, stock, balance) {
+      const wrap = el('div', 'flex shrink-0 flex-col items-end gap-1');
+      if (stock <= 0) {
+        wrap.append(badge('Out of stock'));
+        return { wrap, btn: null };
+      }
+      const btn = el('button', 'btn-secondary min-w-11', 'Redeem');
+      btn.type = 'button';
+      btn.disabled = balance !== null && balance < cost;
+      if (btn.disabled) {
+        wrap.append(btn, el('span', 'text-small text-muted', 'Need ' + fmt(cost - balance) + ' more'));
+      } else {
+        wrap.append(btn);
+      }
+      return { wrap, btn };
+    }
+
+    // ── Router + tab bar ───────────────────────────────────────────────────
+    const appRoot = document.getElementById('app');
+    const tabbar = document.getElementById('tabbar');
+    const TABS = [
+      { id: 'home', label: 'Home', icon: ICONS.home },
+      { id: 'deposits', label: 'Deposits', icon: ICONS.deposits },
+      { id: 'rewards', label: 'Rewards', icon: ICONS.rewards },
+      { id: 'admin', label: 'Admin', icon: ICONS.admin },
+      { id: 'profile', label: 'Profile', icon: ICONS.profile },
+    ];
+    const routes = {};
+
+    function currentRoute() {
+      const h = window.location.hash.replace(/^#\/?/, '');
+      return routes[h] ? h : 'home';
+    }
+
+    function renderTabbar(current) {
+      tabbar.replaceChildren(...TABS
+        .filter(t => t.id !== 'admin' || state.isAdmin)
+        .map(t => {
+          const b = el('button', 'tab-btn');
+          b.type = 'button';
+          if (t.id === current) b.setAttribute('aria-current', 'page');
+          b.append(icon(t.icon, 'h-5 w-5'), el('span', '', t.label));
+          b.addEventListener('click', () => { window.location.hash = '#/' + t.id; });
+          return b;
+        }));
+    }
+
+    let routeEpoch = 0;
+    function route() {
+      const name = currentRoute();
+      renderTabbar(name);
+      const epoch = ++routeEpoch;
+      Promise.resolve(routes[name]()).then(root => {
+        if (epoch === routeEpoch) appRoot.replaceChildren(root);
+      });
+      window.scrollTo(0, 0);
+    }
+    window.addEventListener('hashchange', route);
+
+    function go(name) {
+      if (currentRoute() === name) route();
+      else window.location.hash = '#/' + name;
+    }
+
+    // ── Home ───────────────────────────────────────────────────────────────
+    routes.home = async function homeView() {
+      const root = el('section', 'flex flex-col gap-6');
+
+      // The points card — the app's signature element.
+      const card = el('section', 'card flex min-h-24 flex-col justify-center gap-1');
+      root.append(card);
+
+      // Recent deposits.
+      const recent = el('section', 'flex flex-col gap-2');
+      root.append(recent);
+
+      // How it works.
+      const how = el('section', 'flex flex-col gap-2');
+      how.append(el('h2', 'section-label', 'How it works'));
+      const howCard = el('div', 'card');
+      const steps = el('ol', 'flex flex-col gap-2 text-body');
+      [
+        'Sort your recyclables at home.',
+        'Bring them to the neighborhood waste bank (bank sampah).',
+        'The manager weighs them and records your deposit, and the points land in your balance.',
+        'Redeem points for rewards at the waste bank.',
+      ].forEach((s, i) => {
+        const row = el('li', 'flex items-start gap-3');
+        const n = el('span', 'flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-raised text-small font-medium text-muted', String(i + 1));
+        row.append(n, el('span', '', s));
+        steps.append(row);
+      });
+      howCard.append(steps);
+      how.append(howCard);
+      root.append(how);
+
+      await loadMe(true);
+      renderTabbar(currentRoute());
+
+      // Points card content.
+      if (state.guest || !state.member) {
+        card.append(
+          el('p', 'text-heading', 'Welcome to ReLoop'),
+          el('p', 'text-body text-muted', 'Sign in with Homeroom to see your points and start recycling.')
+        );
+      } else {
+        const top = el('div', 'flex items-start justify-between');
+        const left = el('div');
+        left.append(
+          el('p', 'text-small text-muted', 'Points'),
+          el('p', 'text-title tabular-nums', fmt(state.member.points_balance))
+        );
+        top.append(left, icon(ICONS.loop, 'h-8 w-8 text-accent'));
+        card.append(top);
+        const s = state.stats;
+        card.append(el('p', 'text-small text-muted',
+          s ? kg(s.total_weight_g) + ' kg recycled · ' + fmt(s.deposit_count) + (s.deposit_count === 1 ? ' deposit' : ' deposits') : 'Your deposits will show here.'));
+      }
+
+      // Recent deposits list.
+      recent.append(el('h2', 'section-label', 'Recent deposits'));
+      const host = el('div');
+      recent.append(host);
+      const st = makeStates(host, { errorTitle: "Couldn't load your deposits", loadingText: 'Loading your deposits' });
+      st.setEmpty('No deposits yet', 'Your deposits will appear here once the manager records one.');
+      st.retry = loadRecent;
+      async function loadRecent() {
+        st.show('loading');
+        try {
+          const d = await api('/api/deposits?limit=3');
+          if (!d.deposits.length) { st.show('empty'); return; }
+          st.listEl.replaceChildren(...d.deposits.map(x => depositDetails(x)));
+          st.show('list');
+        } catch (e) { console.error(String(e && e.stack || e)); st.show('error'); }
+      }
+      await loadRecent();
+
+      if (!state.guest) {
+        const seeAll = el('button', 'btn-secondary self-start', 'See all deposits');
+        seeAll.type = 'button';
+        seeAll.addEventListener('click', () => go('deposits'));
+        recent.append(seeAll);
+      }
+      return root;
+    };
+
+    // ── Deposits (resident history) ────────────────────────────────────────
+    routes.deposits = async function depositsView() {
+      const root = el('section', 'flex flex-col gap-4');
+      root.append(el('h1', 'text-title', 'Deposits'));
+      const host = el('div');
+      root.append(host);
+      const st = makeStates(host, { errorTitle: "Couldn't load your deposits", loadingText: 'Loading your deposits' });
+      st.setEmpty('No deposits yet',
+        'Bring sorted waste to the neighborhood waste bank. The manager weighs it and records your first deposit, and your points will appear here.');
+      st.retry = load;
+      async function load() {
+        st.show('loading');
+        try {
+          const d = await api('/api/deposits');
+          if (!d.deposits.length) { st.show('empty'); return; }
+          st.listEl.replaceChildren(...d.deposits.map(x => depositDetails(x)));
+          st.show('list');
+        } catch (e) { console.error(String(e && e.stack || e)); st.show('error'); }
+      }
+      await load();
+      return root;
+    };
+
+    // ── Rewards (catalog + redeem + own redemptions) ───────────────────────
+    routes.rewards = async function rewardsView() {
+      const root = el('section', 'flex flex-col gap-6');
+      root.append(el('h1', 'text-title', 'Rewards'));
+      const note = el('div');
+      root.append(note);
+
+      const catalog = el('section', 'flex flex-col gap-2');
+      catalog.append(el('h2', 'section-label', 'Reward catalog'));
+      const catHost = el('div');
+      catalog.append(catHost);
+      root.append(catalog);
+
+      const mine = el('section', 'flex flex-col gap-2');
+      mine.append(el('h2', 'section-label', 'Your redemptions'));
+      const mineHost = el('div');
+      mine.append(mineHost);
+      root.append(mine);
+
+      await loadMe(true);
+      const balance = state.member ? state.member.points_balance : null;
+
+      const cat = makeStates(catHost, { errorTitle: "Couldn't load rewards", loadingText: 'Loading rewards' });
+      cat.setEmpty('No rewards yet', 'The waste bank manager has not added rewards yet.');
+      cat.retry = loadCatalog;
+      async function loadCatalog() {
+        cat.show('loading');
+        try {
+          const d = await api('/api/rewards');
+          if (!d.rewards.length) { cat.show('empty'); return; }
+          cat.listEl.replaceChildren(...d.rewards.map(r => {
+            const li = el('li', 'list-row items-start justify-between' + (r.stock <= 0 || !r.active ? ' opacity-60' : ''));
+            const left = el('div', 'min-w-0');
+            left.append(
+              el('p', 'text-body font-medium', r.name),
+              el('p', 'text-small text-muted', fmt(r.points_cost) + ' pts · ' +
+                (r.stock > 0 ? fmt(r.stock) + (r.stock === 1 ? ' left' : ' left') : 'Out of stock'))
+            );
+            const pc = pointsColumn(r.points_cost, r.stock, balance);
+            if (pc.btn) {
+              pc.btn.addEventListener('click', () => redeem(r));
+            }
+            li.append(left, pc.wrap);
+            return li;
+          }));
+          cat.show('list');
+        } catch (e) { console.error(String(e && e.stack || e)); cat.show('error'); }
+      }
+
+      async function redeem(r) {
+        const msg = 'Redeem ' + r.name + ' for ' + fmt(r.points_cost) + ' points? This cannot be undone.';
+        if (!window.confirm(msg)) return;
+        try {
+          await api('/api/rewards/' + r.id + '/redeem', { method: 'POST' });
+          await loadMe(true);
+          route();
+        } catch (e) {
+          const text =
+            e.code === 'insufficient_balance' ? 'Not enough points for this reward.' :
+            e.code === 'out_of_stock' ? 'That reward just ran out.' :
+            e.code === 'reward_unavailable' ? 'That reward is no longer available.' :
+            'Redeeming failed. Try again.';
+          note.replaceChildren(banner(text, true));
+        }
+      }
+
+      const mineStates = makeStates(mineHost, { errorTitle: "Couldn't load your redemptions", loadingText: 'Loading your redemptions' });
+      mineStates.setEmpty('No redemptions yet', 'Redeem your points for a reward above, then pick it up at the waste bank.');
+      mineStates.retry = loadMine;
+      async function loadMine() {
+        mineStates.show('loading');
+        try {
+          const d = await api('/api/redemptions');
+          if (!d.redemptions.length) { mineStates.show('empty'); return; }
+          mineStates.listEl.replaceChildren(...d.redemptions.map(r => {
+            const li = el('li', 'list-row items-start justify-between');
+            const left = el('div', 'min-w-0');
+            left.append(
+              el('p', 'text-body font-medium', r.reward_name),
+              el('p', 'text-small text-muted', fmtDate(r.created_at))
+            );
+            const right = el('div', 'flex shrink-0 flex-col items-end gap-1');
+            right.append(badge(STATUS_LABEL[r.status] || r.status),
+              el('span', 'tabular-nums text-small text-muted', '-' + fmt(r.points_spent) + ' pts'));
+            li.append(left, right);
+            return li;
+          }));
+          mineStates.show('list');
+        } catch (e) { console.error(String(e && e.stack || e)); mineStates.show('error'); }
+      }
+
+      await loadCatalog();
+      await loadMine();
+      return root;
+    };
+
+    // ── Profile ────────────────────────────────────────────────────────────
+    routes.profile = async function profileView() {
+      const root = el('section', 'flex flex-col gap-4');
+      root.append(el('h1', 'text-title', 'Profile'));
+      await loadMe(true);
+
+      if (state.guest || !state.member) {
+        const c = el('div', 'card flex flex-col gap-2');
+        c.append(
+          el('p', 'text-heading', 'Make an account to use ReLoop'),
+          el('p', 'text-body text-muted', 'ReLoop keeps your points, deposits and redemptions with your Homeroom account. Sign in to continue.')
+        );
+        root.append(c);
+        return root;
+      }
+
+      const note = el('div');
+      const form = el('form', 'flex flex-col gap-3');
+      const nameIn = textField(); nameIn.value = state.member.display_name || '';
+      nameIn.maxLength = 120;
+      const houseIn = textField(); houseIn.value = state.member.house_no || '';
+      houseIn.maxLength = 120;
+      houseIn.placeholder = 'House 12 / RT 03';
+      const phoneIn = textField(); phoneIn.value = state.member.phone || '';
+      phoneIn.maxLength = 40;
+      phoneIn.placeholder = 'Optional';
+      form.append(
+        fieldRow('Display name', nameIn),
+        fieldRow('House number', houseIn),
+        fieldRow('Phone', phoneIn)
+      );
+      const save = el('button', 'btn-primary self-start', 'Save');
+      save.type = 'submit';
+      form.append(save);
+      form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        save.disabled = true;
+        try {
+          await api('/api/me', {
+            method: 'PATCH',
+            body: JSON.stringify({ display_name: nameIn.value, house_no: houseIn.value, phone: phoneIn.value }),
+          });
+          note.replaceChildren(banner('Profile saved.'));
+        } catch (_) {
+          note.replaceChildren(banner('Saving failed. Try again.', true));
+        } finally {
+          save.disabled = false;
+        }
+      });
+      root.append(note, form);
+
+      // Role, read-only.
+      const role = el('p', 'px-1 text-small text-muted',
+        'Role: ' + (state.member.is_admin ? 'Waste bank manager' : 'Resident'));
+      root.append(role);
+
+      // One-time setup for the neighborhood's first manager.
+      if (!state.member.is_admin) {
+        const setup = el('details', 'card');
+        const summary = el('summary', 'cursor-pointer text-body font-medium', 'Waste bank manager setup');
+        const inner = el('div', 'mt-3 flex flex-col gap-3');
+        const codeIn = textField();
+        codeIn.placeholder = 'Setup code';
+        const activate = el('button', 'btn-secondary self-start', 'Activate');
+        activate.type = 'button';
+        const setupNote = el('div');
+        activate.addEventListener('click', async () => {
+          activate.disabled = true;
+          try {
+            await api('/api/admin/setup', { method: 'POST', body: JSON.stringify({ code: codeIn.value }) });
+            await loadMe(true);
+            route();
+          } catch (e2) {
+            setupNote.replaceChildren(banner(
+              e2.code === 'setup_not_configured'
+                ? 'Manager setup is not configured for this app yet. Set the setup code in the app settings first.'
+                : e2.code === 'invalid_code'
+                  ? 'That code does not match. Ask the neighborhood for the current setup code.'
+                  : 'Activation failed. Try again.',
+              true));
+          } finally {
+            activate.disabled = false;
+          }
         });
-        if (res.ok) loadLeaderboard();
-        else if (res.status === 401) count.textContent = 'Sign in to press!';
-      } catch {}
+        inner.append(
+          el('p', 'text-small text-muted', 'Enter the setup code agreed with your neighborhood to become its waste bank manager. This is a one-time step.'),
+          fieldRow('Setup code', codeIn),
+          activate,
+          setupNote
+        );
+        setup.append(summary, inner);
+        root.append(setup);
+      }
+      return root;
+    };
+
+    // ── Admin ──────────────────────────────────────────────────────────────
+    const ADMIN_TABS = [
+      ['record', 'Record deposit'],
+      ['deposits', 'Deposits'],
+      ['members', 'Members'],
+      ['prices', 'Prices'],
+      ['rewards', 'Rewards'],
+      ['queue', 'Redemption queue'],
+    ];
+
+    routes.admin = async function adminView() {
+      await loadMe(true);
+      if (!state.isAdmin) {
+        const c = el('div', 'card flex flex-col gap-2');
+        c.append(
+          el('p', 'text-heading', 'Managers only'),
+          el('p', 'text-body text-muted', 'This area is for waste bank managers. If you are one, activate your role from the Profile tab.')
+        );
+        const b = el('button', 'btn-secondary self-start', 'Go to Profile');
+        b.type = 'button';
+        b.addEventListener('click', () => go('profile'));
+        c.append(b);
+        return c;
+      }
+      const root = el('section', 'flex flex-col gap-4');
+      root.append(el('h1', 'text-title', 'Admin'));
+
+      const tabRow = el('div', 'flex flex-wrap gap-2');
+      const content = el('div');
+      root.append(tabRow, content);
+
+      function drawTabs() {
+        tabRow.replaceChildren(...ADMIN_TABS.map(([id, label]) => {
+          const b = el('button', 'min-h-11 rounded-full border px-4 text-small font-medium ' +
+            (state.adminTab === id ? 'border-line bg-raised text-fg' : 'border-transparent text-muted'));
+          b.type = 'button';
+          b.textContent = label;
+          b.addEventListener('click', () => {
+            state.adminTab = id;
+            drawTabs();
+            draw();
+          });
+          return b;
+        }));
+      }
+      function draw() {
+        const view = {
+          record: recordDepositView,
+          deposits: adminDepositsView,
+          members: adminMembersView,
+          prices: adminPricesView,
+          rewards: adminRewardsView,
+          queue: adminQueueView,
+        }[state.adminTab];
+        content.replaceChildren();
+        Promise.resolve(view()).then(node => content.replaceChildren(node));
+      }
+      drawTabs();
+      draw();
+      return root;
+    };
+
+    // Record deposit — the admin's core action and the first thing in Admin.
+    async function recordDepositView() {
+      const root = el('div', 'flex flex-col gap-4');
+      const host = el('div', 'flex flex-col gap-4');
+      root.append(host);
+
+      const [members, types] = await Promise.all([adminMembers(), adminWasteTypes()]);
+      const activeTypes = types.filter(t => t.active);
+      if (!state.record) state.record = { member: null, items: [{ waste_type_id: '', weight_kg: '' }] };
+      const rec = state.record;
+
+      const noteBox = el('div');
+      const memberBox = el('div', 'flex flex-col gap-2');
+      const itemsBox = el('div', 'flex flex-col gap-2');
+      const footerBox = el('div', 'flex flex-col gap-3');
+      host.append(noteBox, memberBox, itemsBox, footerBox);
+
+      function totalPoints() {
+        return rec.items.reduce((s, it) => {
+          const t = activeTypes.find(x => String(x.id) === String(it.waste_type_id));
+          const g = Math.round(parseFloat(it.weight_kg) * 1000);
+          if (!t || !Number.isFinite(g) || g <= 0) return s;
+          return s + Math.floor((g * t.points_per_kg) / 1000);
+        }, 0);
+      }
+      function formValid() {
+        if (!rec.member) return false;
+        return rec.items.some(it => {
+          const g = Math.round(parseFloat(it.weight_kg) * 1000);
+          return it.waste_type_id && Number.isFinite(g) && g > 0;
+        });
+      }
+
+      let saveBtn;
+      let totalSpan;
+      function drawMember() {
+        memberBox.replaceChildren();
+        memberBox.append(el('h2', 'section-label', 'Member'));
+        if (rec.member) {
+          const row = el('div', 'flex min-h-11 items-center justify-between gap-3 rounded-lg border border-line bg-surface px-4 py-2');
+          const left = el('div', 'min-w-0');
+          left.append(el('p', 'text-body font-medium', displayName(rec.member)),
+            el('p', 'text-small text-muted', (rec.member.house_no || rec.member.username)));
+          const change = el('button', 'btn-secondary shrink-0', 'Change');
+          change.type = 'button';
+          change.addEventListener('click', () => { rec.member = null; drawMember(); });
+          row.append(left, change);
+          memberBox.append(row);
+        } else {
+          const search = textField();
+          search.placeholder = 'Search by name or house number';
+          const results = el('ul', 'list');
+          search.addEventListener('input', () => {
+            const q = search.value.trim().toLowerCase();
+            if (!q) { results.replaceChildren(); results.hidden = true; return; }
+            const hits = state.members.filter(m =>
+              (m.display_name || '').toLowerCase().includes(q) ||
+              (m.house_no || '').toLowerCase().includes(q) ||
+              (m.username || '').toLowerCase().includes(q)
+            ).slice(0, 8);
+            results.replaceChildren(...hits.map(m => {
+              const li = el('li');
+              const b = el('button', 'list-row w-full cursor-pointer text-left');
+              b.type = 'button';
+              b.append(el('div', 'min-w-0', ''), el('span', 'tabular-nums text-small text-muted', fmt(m.points_balance) + ' pts'));
+              b.firstChild.replaceChildren(
+                el('p', 'text-body font-medium', displayName(m)),
+                el('p', 'text-small text-muted', (m.house_no || '') + ' · @' + m.username));
+              b.addEventListener('click', () => {
+                rec.member = m;
+                results.replaceChildren();
+                results.hidden = true;
+                search.value = '';
+                drawMember();
+              });
+              li.append(b);
+              return li;
+            }));
+            results.hidden = false;
+          });
+          results.hidden = true;
+          memberBox.append(search, results);
+        }
+      }
+
+      function drawItems() {
+        itemsBox.replaceChildren();
+        itemsBox.append(el('h2', 'section-label', 'Waste'));
+        const rows = el('div', 'flex flex-col gap-2');
+        rec.items.forEach((it, idx) => {
+          const row = el('div', 'flex items-center gap-2');
+          const sel = el('select', 'field min-w-0 flex-1');
+          const ph = el('option', '', 'Waste type');
+          ph.value = '';
+          sel.append(ph);
+          for (const t of activeTypes) {
+            const o = el('option', '', t.name + ' (' + fmt(t.points_per_kg) + ' pts/kg)');
+            o.value = String(t.id);
+            sel.append(o);
+          }
+          sel.value = it.waste_type_id || '';
+          const wt = numberField('0.01');
+          wt.className = 'field w-24 shrink-0';
+          wt.placeholder = 'kg';
+          wt.value = it.weight_kg;
+          const pts = el('span', 'w-16 shrink-0 text-right tabular-nums text-small text-muted', '');
+          const rm = el('button', 'btn-secondary h-11 w-11 shrink-0 px-0', '✕');
+          rm.type = 'button';
+          rm.setAttribute('aria-label', 'Remove line');
+          function recompute() {
+            it.waste_type_id = sel.value;
+            it.weight_kg = wt.value;
+            const t = activeTypes.find(x => String(x.id) === it.waste_type_id);
+            const g = Math.round(parseFloat(wt.value) * 1000);
+            pts.textContent = t && Number.isFinite(g) && g > 0
+              ? '+' + fmt(Math.floor((g * t.points_per_kg) / 1000)) + ' pts' : '';
+            saveBtn.disabled = !formValid();
+            totalSpan.textContent = fmt(totalPoints()) + ' pts';
+          }
+          sel.addEventListener('change', recompute);
+          wt.addEventListener('input', recompute);
+          rm.addEventListener('click', () => {
+            rec.items.splice(idx, 1);
+            if (!rec.items.length) rec.items.push({ waste_type_id: '', weight_kg: '' });
+            drawItems();
+          });
+          row.append(sel, wt, pts, rm);
+          rows.append(row);
+        });
+        itemsBox.append(rows);
+        const add = el('button', 'btn-secondary self-start', 'Add waste type');
+        add.type = 'button';
+        add.addEventListener('click', () => {
+          rec.items.push({ waste_type_id: '', weight_kg: '' });
+          drawItems();
+        });
+        itemsBox.append(add);
+      }
+
+      function drawFooter() {
+        footerBox.replaceChildren();
+        const total = el('div', 'flex items-center justify-between border-t border-line px-1 pt-3');
+        totalSpan = el('span', 'tabular-nums text-body font-medium', fmt(totalPoints()) + ' pts');
+        total.append(el('span', 'text-body font-medium', 'Total'), totalSpan);
+        saveBtn = el('button', 'btn-primary self-start', 'Record deposit');
+        saveBtn.type = 'button';
+        saveBtn.disabled = !formValid();
+        saveBtn.addEventListener('click', save);
+        footerBox.append(total, saveBtn);
+      }
+
+      async function save() {
+        saveBtn.disabled = true;
+        const items = rec.items
+          .map(it => ({
+            waste_type_id: parseInt(it.waste_type_id, 10),
+            weight_g: Math.round(parseFloat(it.weight_kg) * 1000),
+          }))
+          .filter(it => Number.isInteger(it.waste_type_id) && Number.isFinite(it.weight_g) && it.weight_g > 0);
+        try {
+          const res = await api('/api/deposits', {
+            method: 'POST',
+            body: JSON.stringify({ member_id: rec.member.id, items }),
+          });
+          const name = displayName(rec.member);
+          noteBox.replaceChildren(banner('Deposit recorded: ' + name + ' now has ' + fmt(res.points_balance) + ' points.'));
+          rec.member = null;
+          rec.items.splice(0, rec.items.length, { waste_type_id: '', weight_kg: '' });
+          state.members = null;
+          drawMember(); drawItems(); drawFooter();
+        } catch (e) {
+          const text =
+            e.code === 'waste_type_unavailable' ? 'A waste type is no longer active. Reload the page and try again.' :
+            e.code === 'invalid_weight' || e.code === 'items_required' ? 'Check the weights. Each line needs more than 0 kg.' :
+            e.code === 'member_not_found' ? 'That member no longer exists. Pick a different one.' :
+            'Recording the deposit failed. Try again.';
+          noteBox.replaceChildren(banner(text, true));
+          saveBtn.disabled = false;
+        }
+      }
+
+      drawMember();
+      drawItems();
+      drawFooter();
+      return root;
     }
 
-    document.getElementById('press-btn').addEventListener('click', press);
-    document.getElementById('leaderboard-press').addEventListener('click', press);
-    document.getElementById('leaderboard-retry').addEventListener('click', () => {
-      show('loading');
-      loadLeaderboard();
-    });
+    // Admin: all deposits, filterable to one member, with void.
+    async function adminDepositsView() {
+      const root = el('div', 'flex flex-col gap-4');
+      const noteBox = el('div');
+      const filterRow = el('div', 'flex flex-col gap-1');
+      filterRow.append(el('span', 'px-1 text-small font-medium text-muted', 'Filter by member'));
+      const sel = el('select', 'field');
+      const allOpt = el('option', '', 'All members');
+      allOpt.value = '';
+      sel.append(allOpt);
+      const members = await adminMembers();
+      for (const m of members) {
+        const o = el('option', '', displayName(m) + (m.house_no ? ' · ' + m.house_no : ''));
+        o.value = String(m.id);
+        sel.append(o);
+      }
+      sel.value = state.memberFilter;
+      sel.addEventListener('change', () => { state.memberFilter = sel.value; load(); });
+      filterRow.append(sel);
+      const host = el('div');
+      root.append(noteBox, filterRow, host);
 
-    loadLeaderboard();
+      const st = makeStates(host, { errorTitle: "Couldn't load deposits", loadingText: 'Loading deposits' });
+      st.setEmpty('No deposits yet', 'Recorded deposits across the neighborhood will appear here.');
+      st.retry = load;
+
+      async function load() {
+        st.show('loading');
+        try {
+          const q = state.memberFilter ? '/api/deposits?member_id=' + encodeURIComponent(state.memberFilter) : '/api/deposits?all=1';
+          const d = await api(q);
+          if (!d.deposits.length) { st.show('empty'); return; }
+          st.listEl.replaceChildren(...d.deposits.map(x => depositDetails(x, { showMember: true, voidButton: voidDeposit })));
+          st.show('list');
+        } catch (e) { console.error(String(e && e.stack || e)); st.show('error'); }
+      }
+
+      async function voidDeposit(d) {
+        if (!window.confirm('Void this deposit and remove ' + fmt(d.total_points) +
+          ' points from ' + displayName(d.member) + "'s balance?")) return;
+        try {
+          await api('/api/deposits/' + d.id + '/void', { method: 'POST' });
+          state.members = null;
+          load();
+        } catch (e) {
+          const text =
+            e.code === 'insufficient_balance_to_void' ? "Can't void: the member has already spent these points." :
+            e.code === 'already_voided' ? 'This deposit was already voided.' :
+            'Voiding failed. Try again.';
+          noteBox.replaceChildren(banner(text, true));
+        }
+      }
+
+      await load();
+      return root;
+    }
+
+    // Admin: the neighborhood roster + member detail.
+    async function adminMembersView() {
+      const root = el('div', 'flex flex-col gap-4');
+      drawList();
+      return root;
+
+      function drawList() {
+        root.replaceChildren();
+        const host = el('div');
+        root.append(host);
+        const st = makeStates(host, { errorTitle: "Couldn't load members", loadingText: 'Loading members' });
+        st.setEmpty('No members yet', 'Members appear here the first time they open ReLoop.');
+        st.retry = load;
+        async function load() {
+          st.show('loading');
+          try {
+            const ms = await adminMembers(true);
+            if (!ms.length) { st.show('empty'); return; }
+            st.listEl.replaceChildren(...ms.map(m => {
+              const li = el('li');
+              const b = el('button', 'list-row w-full cursor-pointer items-start justify-between text-left');
+              b.type = 'button';
+              const left = el('div', 'min-w-0');
+              left.append(el('p', 'text-body font-medium', displayName(m)),
+                el('p', 'text-small text-muted',
+                  (m.house_no || m.username) + ' · ' + fmt(m.deposit_count) + (m.deposit_count === 1 ? ' deposit' : ' deposits')));
+              const right = el('div', 'flex shrink-0 items-center gap-2');
+              if (m.is_admin) right.append(badge('Manager'));
+              right.append(el('span', 'tabular-nums text-body font-medium', fmt(m.points_balance) + ' pts'));
+              b.append(left, right);
+              b.addEventListener('click', () => memberDetail(m));
+              li.append(b);
+              return li;
+            }));
+            st.show('list');
+          } catch (e) { console.error(String(e && e.stack || e)); st.show('error'); }
+        }
+        load();
+      }
+
+      async function memberDetail(m) {
+        const detail = el('div', 'flex flex-col gap-4');
+        const back = el('button', 'btn-secondary self-start', 'Members');
+        back.type = 'button';
+        back.addEventListener('click', () => drawList());
+        detail.append(back, el('h2', 'text-heading', displayName(m) + (m.house_no ? ' · ' + m.house_no : '')));
+
+        const noteBox = el('div');
+        const form = el('form', 'flex flex-col gap-3');
+        const nameIn = textField(); nameIn.value = m.display_name || ''; nameIn.maxLength = 120;
+        const houseIn = textField(); houseIn.value = m.house_no || ''; houseIn.maxLength = 120;
+        const phoneIn = textField(); phoneIn.value = m.phone || ''; phoneIn.maxLength = 40;
+        const cb = checkbox('Waste bank manager', m.is_admin);
+        const isSelf = state.member && state.member.id === m.id;
+        if (isSelf && m.is_admin) {
+          cb.box.disabled = true;
+          detail.append(el('p', 'text-small text-muted', "You can't remove your own manager access. Another manager has to do that."));
+        }
+        form.append(
+          fieldRow('Display name', nameIn),
+          fieldRow('House number', houseIn),
+          fieldRow('Phone', phoneIn),
+          cb.wrap
+        );
+        const save = el('button', 'btn-primary self-start', 'Save member');
+        save.type = 'submit';
+        form.append(save);
+        form.addEventListener('submit', async (e) => {
+          e.preventDefault();
+          save.disabled = true;
+          try {
+            await api('/api/members/' + m.id, {
+              method: 'PATCH',
+              body: JSON.stringify({
+                display_name: nameIn.value, house_no: houseIn.value, phone: phoneIn.value,
+                is_admin: cb.box.checked,
+              }),
+            });
+            state.members = null;
+            noteBox.replaceChildren(banner('Member saved.'));
+          } catch (e2) {
+            noteBox.replaceChildren(banner(
+              e2.code === 'cannot_demote_self' ? "You can't remove your own manager access." :
+              'Saving failed. Try again.', true));
+          } finally {
+            save.disabled = false;
+          }
+        });
+        detail.append(noteBox, form);
+
+        const hist = el('div', 'flex flex-col gap-2');
+        hist.append(el('h3', 'section-label', 'Deposits'));
+        const histHost = el('div');
+        hist.append(histHost);
+        detail.append(hist);
+        const hst = makeStates(histHost, { errorTitle: "Couldn't load their deposits", loadingText: 'Loading deposits' });
+        hst.setEmpty('No deposits yet', 'This member has no recorded deposits.');
+        hst.retry = loadHist;
+        async function loadHist() {
+          hst.show('loading');
+          try {
+            const d = await api('/api/deposits?member_id=' + m.id);
+            if (!d.deposits.length) { hst.show('empty'); return; }
+            hst.listEl.replaceChildren(...d.deposits.map(x => depositDetails(x)));
+            hst.show('list');
+          } catch (e) { console.error(String(e && e.stack || e)); hst.show('error'); }
+        }
+        loadHist();
+
+        root.replaceChildren(detail);
+      }
+
+      await load();
+      return root;
+    }
+
+    // Shared editor panel for one waste type / reward (admin).
+    function editorPanel({ title, fields, active, activeLabel, saveLabel, onSubmit, onBack, noteBox }) {
+      const panel = el('div', 'flex flex-col gap-3');
+      const back = el('button', 'btn-secondary self-start', 'Back');
+      back.type = 'button';
+      back.addEventListener('click', onBack);
+      panel.append(back, el('h2', 'text-heading', title), noteBox);
+      const form = el('form', 'flex flex-col gap-3');
+      for (const f of fields) form.append(fieldRow(f.label, f.input));
+      if (active) form.append(active.wrap);
+      const save = el('button', 'btn-primary self-start', saveLabel || 'Save');
+      save.type = 'submit';
+      form.append(save);
+      form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        save.disabled = true;
+        try { await onSubmit(); }
+        finally { save.disabled = false; }
+      });
+      panel.append(form);
+      return panel;
+    }
+
+    // Admin: waste-type prices.
+    async function adminPricesView() {
+      const root = el('div', 'flex flex-col gap-4');
+
+      function editPanel(existing) {
+        const noteBox = el('div');
+        const nameIn = textField(); nameIn.value = existing ? existing.name : ''; nameIn.maxLength = 120;
+        const ppkIn = numberField('1'); ppkIn.value = existing ? existing.points_per_kg : '';
+        ppkIn.placeholder = 'Points per kg';
+        const active = existing ? checkbox('Accepted at the waste bank', existing.active) : null;
+        return editorPanel({
+          title: existing ? 'Edit price' : 'Add waste type',
+          fields: [
+            { label: 'Name', input: nameIn },
+            { label: 'Points per kilogram', input: ppkIn },
+          ],
+          active,
+          saveLabel: existing ? 'Save price' : 'Add waste type',
+          noteBox,
+          onBack: () => draw(),
+          onSubmit: async () => {
+            const body = { name: nameIn.value, points_per_kg: ppkIn.value };
+            if (active) body.active = active.box.checked;
+            try {
+              if (existing) await api('/api/waste-types/' + existing.id, { method: 'PATCH', body: JSON.stringify(body) });
+              else await api('/api/waste-types', { method: 'POST', body: JSON.stringify(body) });
+              state.wasteTypes = null;
+              draw();
+            } catch (e) {
+              noteBox.replaceChildren(banner(
+                e.code === 'name_required' ? 'Give the waste type a name.' :
+                e.code === 'invalid_points_per_kg' ? 'Points per kilogram must be a number of 0 or more.' :
+                'Saving failed. Try again.', true));
+            }
+          },
+        });
+      }
+
+      function draw() {
+        root.replaceChildren();
+        const addBtn = el('button', 'btn-primary self-start', 'Add waste type');
+        addBtn.type = 'button';
+        addBtn.addEventListener('click', () => root.replaceChildren(editPanel(null)));
+        root.append(addBtn);
+        const listHost = el('div', 'mt-2');
+        root.append(listHost);
+        const lst = makeStates(listHost, { errorTitle: "Couldn't load prices", loadingText: 'Loading prices' });
+        lst.setEmpty('No waste types yet', 'Add the waste types your waste bank accepts and their price in points per kilogram.');
+        lst.retry = load;
+        async function load() {
+          lst.show('loading');
+          try {
+            const ts = await adminWasteTypes(true);
+            if (!ts.length) { lst.show('empty'); return; }
+            lst.listEl.replaceChildren(...ts.map(t => {
+              const li = el('li');
+              const b = el('button', 'list-row w-full cursor-pointer items-start justify-between text-left');
+              b.type = 'button';
+              const left = el('div', 'min-w-0');
+              left.append(el('p', 'text-body font-medium', t.name),
+                el('p', 'text-small text-muted', fmt(t.points_per_kg) + ' pts per kg'));
+              const right = el('div', 'flex shrink-0 items-center gap-2');
+              if (!t.active) right.append(badge('Retired'));
+              b.append(left, right);
+              b.addEventListener('click', () => root.replaceChildren(editPanel(t)));
+              li.append(b);
+              return li;
+            }));
+            lst.show('list');
+          } catch (e) { console.error(String(e && e.stack || e)); lst.show('error'); }
+        }
+        load();
+      }
+
+      draw();
+      return root;
+    }
+
+    // Admin: the reward catalog.
+    async function adminRewardsView() {
+      const root = el('div', 'flex flex-col gap-4');
+
+      function editPanel(existing) {
+        const noteBox = el('div');
+        const nameIn = textField(); nameIn.value = existing ? existing.name : ''; nameIn.maxLength = 120;
+        const costIn = numberField('1'); costIn.value = existing ? existing.points_cost : '';
+        costIn.placeholder = 'Points';
+        const stockIn = numberField('1'); stockIn.value = existing ? existing.stock : '';
+        stockIn.placeholder = 'Stock';
+        const active = existing ? checkbox('Shown in the catalog', existing.active) : null;
+        return editorPanel({
+          title: existing ? 'Edit reward' : 'Add reward',
+          fields: [
+            { label: 'Name', input: nameIn },
+            { label: 'Points cost', input: costIn },
+            { label: 'Stock', input: stockIn },
+          ],
+          active,
+          saveLabel: existing ? 'Save reward' : 'Add reward',
+          noteBox,
+          onBack: () => draw(),
+          onSubmit: async () => {
+            const body = { name: nameIn.value, points_cost: costIn.value, stock: stockIn.value };
+            if (active) body.active = active.box.checked;
+            try {
+              if (existing) await api('/api/rewards/' + existing.id, { method: 'PATCH', body: JSON.stringify(body) });
+              else await api('/api/rewards', { method: 'POST', body: JSON.stringify(body) });
+              draw();
+            } catch (e) {
+              noteBox.replaceChildren(banner(
+                e.code === 'name_required' ? 'Give the reward a name.' :
+                e.code === 'invalid_reward' ? 'Points cost and stock must be numbers of 0 or more.' :
+                'Saving failed. Try again.', true));
+            }
+          },
+        });
+      }
+
+      function draw() {
+        root.replaceChildren();
+        const addBtn = el('button', 'btn-primary self-start', 'Add reward');
+        addBtn.type = 'button';
+        addBtn.addEventListener('click', () => root.replaceChildren(editPanel(null)));
+        root.append(addBtn);
+        const listHost = el('div', 'mt-2');
+        root.append(listHost);
+        const lst = makeStates(listHost, { errorTitle: "Couldn't load rewards", loadingText: 'Loading rewards' });
+        lst.setEmpty('No rewards yet', 'Add what residents can redeem their points for, with its cost in points and stock.');
+        lst.retry = load;
+        async function load() {
+          lst.show('loading');
+          try {
+            const rs = (await api('/api/rewards?all=1')).rewards;
+            if (!rs.length) { lst.show('empty'); return; }
+            lst.listEl.replaceChildren(...rs.map(r => {
+              const li = el('li');
+              const b = el('button', 'list-row w-full cursor-pointer items-start justify-between text-left');
+              b.type = 'button';
+              const left = el('div', 'min-w-0');
+              left.append(el('p', 'text-body font-medium', r.name),
+                el('p', 'text-small text-muted', fmt(r.points_cost) + ' pts · ' + fmt(r.stock) + ' in stock'));
+              const right = el('div', 'flex shrink-0 items-center gap-2');
+              if (!r.active) right.append(badge('Hidden'));
+              b.append(left, right);
+              b.addEventListener('click', () => root.replaceChildren(editPanel(r)));
+              li.append(b);
+              return li;
+            }));
+            lst.show('list');
+          } catch (e) { console.error(String(e && e.stack || e)); lst.show('error'); }
+        }
+        load();
+      }
+
+      draw();
+      return root;
+    }
+
+    // Admin: redemptions waiting for pickup.
+    async function adminQueueView() {
+      const root = el('div', 'flex flex-col gap-4');
+      const noteBox = el('div');
+      const host = el('div');
+      root.append(noteBox, host);
+      const st = makeStates(host, { errorTitle: "Couldn't load the redemption queue", loadingText: 'Loading the redemption queue' });
+      st.setEmpty('No redemptions yet', 'When residents redeem points, their pickups appear here.');
+      st.retry = load;
+
+      async function resolve(r, status) {
+        try {
+          await api('/api/redemptions/' + r.id + '/resolve', {
+            method: 'POST',
+            body: JSON.stringify({ status }),
+          });
+          load();
+        } catch (e) {
+          const text =
+            e.code === 'already_resolved' ? 'This redemption was already handled.' :
+            'That failed. Try again.';
+          noteBox.replaceChildren(banner(text, true));
+        }
+      }
+
+      async function load() {
+        st.show('loading');
+        try {
+          const d = await api('/api/redemptions?all=1');
+          const pending = d.redemptions.filter(r => r.status === 'pending');
+          const resolved = d.redemptions.filter(r => r.status !== 'pending');
+          const nodes = [];
+          if (pending.length) {
+            nodes.push(el('li', 'px-4 pt-2 text-small font-medium text-muted', 'Waiting for pickup'));
+            for (const r of pending) {
+              const li = el('li', 'list-row flex-col items-stretch gap-3');
+              const top = el('div', 'flex items-start justify-between gap-3');
+              const left = el('div', 'min-w-0');
+              left.append(el('p', 'text-body font-medium', r.reward_name),
+                el('p', 'text-small text-muted', displayName(r.member) +
+                  (r.member.house_no ? ' · ' + r.member.house_no : '') + ' · ' + fmtDate(r.created_at)));
+              top.append(left, el('span', 'shrink-0 tabular-nums text-body font-medium', '-' + fmt(r.points_spent) + ' pts'));
+              const actions = el('div', 'flex gap-2');
+              const picked = el('button', 'btn-primary flex-1', 'Mark as picked up');
+              picked.type = 'button';
+              picked.addEventListener('click', () => resolve(r, 'picked_up'));
+              const cancel = el('button', 'btn-secondary', 'Cancel');
+              cancel.type = 'button';
+              cancel.addEventListener('click', () => resolve(r, 'cancelled'));
+              actions.append(picked, cancel);
+              li.append(top, actions);
+              nodes.push(li);
+            }
+          }
+          for (const r of resolved) {
+            const li = el('li', 'list-row items-start justify-between opacity-70');
+            const left = el('div', 'min-w-0');
+            left.append(el('p', 'text-body font-medium', r.reward_name),
+              el('p', 'text-small text-muted', displayName(r.member) + ' · ' + fmtDate(r.created_at)));
+            const right = el('div', 'flex shrink-0 items-center gap-2');
+            right.append(badge(STATUS_LABEL[r.status] || r.status));
+            li.append(left, right);
+            nodes.push(li);
+          }
+          if (!d.redemptions.length) { st.show('empty'); return; }
+          st.listEl.replaceChildren(...nodes);
+          st.show('list');
+        } catch (e) { console.error(String(e && e.stack || e)); st.show('error'); }
+      }
+
+      await load();
+      return root;
+    }
+
+    // ── Boot ───────────────────────────────────────────────────────────────
+    // Views await loadMe() themselves; once it lands, refresh the tab bar so
+    // the Admin tab appears for waste bank managers.
+    route();
+    loadMe().then(() => renderTabbar(currentRoute()));
+  })();
   </script>
 </body>
 </html>
