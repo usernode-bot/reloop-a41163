@@ -725,6 +725,7 @@
       ['prices', 'Prices'],
       ['rewards', 'Rewards'],
       ['queue', 'Redemption queue'],
+      ['report', 'Report'],
     ];
 
     routes.admin = async function adminView() {
@@ -770,6 +771,7 @@
           prices: adminPricesView,
           rewards: adminRewardsView,
           queue: adminQueueView,
+          report: reportView,
         }[state.adminTab];
         content.replaceChildren();
         Promise.resolve(view()).then(node => content.replaceChildren(node));
@@ -1386,6 +1388,67 @@
           }
           if (!d.redemptions.length) { st.show('empty'); return; }
           st.listEl.replaceChildren(...nodes);
+          st.show('list');
+        } catch (e) { console.error(String(e && e.stack || e)); st.show('error'); }
+      }
+
+      await load();
+      return root;
+    }
+
+    // Admin: neighborhood report — the whole waste bank at a glance.
+    // Read-only; voided deposits count nowhere (the API already excludes
+    // them).
+    async function reportView() {
+      const root = el('div', 'flex flex-col gap-4');
+      const host = el('div');
+      root.append(host);
+      const st = makeStates(host, { errorTitle: "Couldn't load the report", loadingText: 'Loading the report' });
+      st.setEmpty('No deposits yet', 'The report appears once the first deposit is recorded.');
+      st.retry = load;
+
+      async function load() {
+        st.show('loading');
+        try {
+          const r = (await api('/api/report')).report;
+          if (r.waste_g === 0) { st.show('empty'); return; }
+
+          // The report is a summary, not a row list, so the makeStates host
+          // gives up its .list chrome (cards must not sit inside a .list)
+          // and carries the tiles + list instead.
+          st.listEl.className = 'flex flex-col gap-4';
+
+          const tiles = el('div', 'flex flex-wrap gap-2');
+          function tile(label, value) {
+            const c = el('div', 'card flex min-w-[45%] flex-1 flex-col gap-1');
+            c.append(el('p', 'text-small text-muted', label),
+              el('p', 'text-heading tabular-nums', value));
+            return c;
+          }
+          tiles.append(
+            tile('Waste collected', kg(r.waste_g) + ' kg'),
+            tile('Points issued', fmt(r.points_issued)),
+            tile('Points redeemed', fmt(r.points_redeemed)),
+            tile('Members', fmt(r.members_active) + ' of ' + fmt(r.members_total)),
+          );
+
+          const lines = el('p', 'px-1 text-small text-muted',
+            fmt(r.points_pending) + ' points waiting for pickup · ' +
+            fmt(r.points_in_circulation) + ' points in circulation');
+
+          const types = el('section', 'flex flex-col gap-2');
+          types.append(el('h2', 'section-label', 'By waste type'));
+          const list = el('ul', 'list');
+          list.replaceChildren(...r.by_type.map(t => {
+            const li = el('li', 'list-row justify-between');
+            li.append(el('p', 'min-w-0 text-body', t.label),
+              el('span', 'shrink-0 tabular-nums text-small text-muted',
+                kg(t.weight_g) + ' kg · ' + fmt(t.points) + ' pts'));
+            return li;
+          }));
+          types.append(list);
+
+          st.listEl.replaceChildren(tiles, lines, types);
           st.show('list');
         } catch (e) { console.error(String(e && e.stack || e)); st.show('error'); }
       }
