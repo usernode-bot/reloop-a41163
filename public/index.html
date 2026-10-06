@@ -224,6 +224,10 @@
 
     // ── Formatting ─────────────────────────────────────────────────────────
     function fmt(n) { return Number(n).toLocaleString('en-US'); }
+    // Amount on a deposit line: pieces for per-item types, kilograms otherwise.
+    function amount(i) {
+      return i.quantity != null ? fmt(i.quantity) + (i.quantity === 1 ? ' item' : ' items') : kg(i.weight_g) + ' kg';
+    }
     function kg(g) { return (Math.round((g / 1000) * 100) / 100).toLocaleString('en-US'); }
     function fmtDate(iso) {
       return new Date(iso).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
@@ -306,7 +310,7 @@
 
     // ── Shared row builders ────────────────────────────────────────────────
     function depositSummary(d) {
-      return d.items.map(i => i.label + ' ' + kg(i.weight_g) + ' kg').join(', ');
+      return d.items.map(i => i.label + ' ' + amount(i)).join(', ');
     }
 
     function depositDetails(d, opts) {
@@ -333,7 +337,7 @@
       const body = el('div', 'flex flex-col gap-2 border-t border-line px-4 py-3 text-small');
       for (const i of d.items) {
         const row = el('div', 'flex justify-between gap-3');
-        row.append(el('span', 'min-w-0', i.label + ' · ' + kg(i.weight_g) + ' kg'),
+        row.append(el('span', 'min-w-0', i.label + ' · ' + amount(i)),
           el('span', 'tabular-nums text-muted', fmt(i.points) + ' pts'));
         body.append(row);
       }
@@ -789,7 +793,7 @@
 
       const [members, types] = await Promise.all([adminMembers(), adminWasteTypes()]);
       const activeTypes = types.filter(t => t.active);
-      if (!state.record) state.record = { member: null, items: [{ waste_type_id: '', weight_kg: '' }] };
+      if (!state.record) state.record = { member: null, items: [{ waste_type_id: '', weight_kg: '', quantity: '' }] };
       const rec = state.record;
 
       const noteBox = el('div');
@@ -798,20 +802,30 @@
       const footerBox = el('div', 'flex flex-col gap-3');
       host.append(noteBox, memberBox, itemsBox, footerBox);
 
+      function typeOf(it) { return activeTypes.find(x => String(x.id) === String(it.waste_type_id)); }
+      // Points for one line, or 0 while the amount is blank or invalid.
+      function linePoints(it) {
+        const t = typeOf(it);
+        if (!t) return 0;
+        if (t.unit === 'item') {
+          const q = parseInt(it.quantity, 10);
+          return Number.isInteger(q) && q > 0 ? q * t.points_per_kg : 0;
+        }
+        const g = Math.round(parseFloat(it.weight_kg) * 1000);
+        return Number.isFinite(g) && g > 0 ? Math.floor((g * t.points_per_kg) / 1000) : 0;
+      }
+      function lineFilled(it) {
+        const t = typeOf(it);
+        if (!t) return false;
+        if (t.unit === 'item') { const q = parseInt(it.quantity, 10); return Number.isInteger(q) && q > 0; }
+        const g = Math.round(parseFloat(it.weight_kg) * 1000);
+        return Number.isFinite(g) && g > 0;
+      }
       function totalPoints() {
-        return rec.items.reduce((s, it) => {
-          const t = activeTypes.find(x => String(x.id) === String(it.waste_type_id));
-          const g = Math.round(parseFloat(it.weight_kg) * 1000);
-          if (!t || !Number.isFinite(g) || g <= 0) return s;
-          return s + Math.floor((g * t.points_per_kg) / 1000);
-        }, 0);
+        return rec.items.reduce((s, it) => s + linePoints(it), 0);
       }
       function formValid() {
-        if (!rec.member) return false;
-        return rec.items.some(it => {
-          const g = Math.round(parseFloat(it.weight_kg) * 1000);
-          return it.waste_type_id && Number.isFinite(g) && g > 0;
-        });
+        return !!rec.member && rec.items.some(lineFilled);
       }
 
       let saveBtn;
@@ -877,7 +891,7 @@
           ph.value = '';
           sel.append(ph);
           for (const t of activeTypes) {
-            const o = el('option', '', t.name + ' (' + fmt(t.points_per_kg) + ' pts/kg)');
+            const o = el('option', '', t.name + ' (' + fmt(t.points_per_kg) + (t.unit === 'item' ? ' pts/item)' : ' pts/kg)'));
             o.value = String(t.id);
             sel.append(o);
           }
@@ -886,6 +900,17 @@
           wt.className = 'field w-24 shrink-0';
           wt.placeholder = 'kg';
           wt.value = it.weight_kg;
+          const qty = numberField('1');
+          qty.className = 'field w-24 shrink-0';
+          qty.placeholder = 'Items';
+          qty.value = it.quantity;
+          // Show the field that matches the chosen type's unit.
+          function syncUnit() {
+            const t = typeOf(it);
+            const perItem = !!t && t.unit === 'item';
+            wt.hidden = perItem;
+            qty.hidden = !perItem;
+          }
           const pts = el('span', 'w-16 shrink-0 text-right tabular-nums text-small text-muted', '');
           const rm = el('button', 'btn-secondary h-11 w-11 shrink-0 px-0', '✕');
           rm.type = 'button';
@@ -893,28 +918,30 @@
           function recompute() {
             it.waste_type_id = sel.value;
             it.weight_kg = wt.value;
-            const t = activeTypes.find(x => String(x.id) === it.waste_type_id);
-            const g = Math.round(parseFloat(wt.value) * 1000);
-            pts.textContent = t && Number.isFinite(g) && g > 0
-              ? '+' + fmt(Math.floor((g * t.points_per_kg) / 1000)) + ' pts' : '';
+            it.quantity = qty.value;
+            syncUnit();
+            const p = linePoints(it);
+            pts.textContent = p > 0 ? '+' + fmt(p) + ' pts' : '';
             saveBtn.disabled = !formValid();
             totalSpan.textContent = fmt(totalPoints()) + ' pts';
           }
           sel.addEventListener('change', recompute);
           wt.addEventListener('input', recompute);
+          qty.addEventListener('input', recompute);
+          syncUnit();
           rm.addEventListener('click', () => {
             rec.items.splice(idx, 1);
-            if (!rec.items.length) rec.items.push({ waste_type_id: '', weight_kg: '' });
+            if (!rec.items.length) rec.items.push({ waste_type_id: '', weight_kg: '', quantity: '' });
             drawItems();
           });
-          row.append(sel, wt, pts, rm);
+          row.append(sel, wt, qty, pts, rm);
           rows.append(row);
         });
         itemsBox.append(rows);
         const add = el('button', 'btn-secondary self-start', 'Add waste type');
         add.type = 'button';
         add.addEventListener('click', () => {
-          rec.items.push({ waste_type_id: '', weight_kg: '' });
+          rec.items.push({ waste_type_id: '', weight_kg: '', quantity: '' });
           drawItems();
         });
         itemsBox.append(add);
@@ -935,11 +962,10 @@
       async function save() {
         saveBtn.disabled = true;
         const items = rec.items
-          .map(it => ({
-            waste_type_id: parseInt(it.waste_type_id, 10),
-            weight_g: Math.round(parseFloat(it.weight_kg) * 1000),
-          }))
-          .filter(it => Number.isInteger(it.waste_type_id) && Number.isFinite(it.weight_g) && it.weight_g > 0);
+          .filter(lineFilled)
+          .map(it => typeOf(it).unit === 'item'
+            ? { waste_type_id: parseInt(it.waste_type_id, 10), quantity: parseInt(it.quantity, 10) }
+            : { waste_type_id: parseInt(it.waste_type_id, 10), weight_g: Math.round(parseFloat(it.weight_kg) * 1000) });
         try {
           const res = await api('/api/deposits', {
             method: 'POST',
@@ -948,13 +974,13 @@
           const name = displayName(rec.member);
           noteBox.replaceChildren(banner('Deposit recorded: ' + name + ' now has ' + fmt(res.points_balance) + ' points.'));
           rec.member = null;
-          rec.items.splice(0, rec.items.length, { waste_type_id: '', weight_kg: '' });
+          rec.items.splice(0, rec.items.length, { waste_type_id: '', weight_kg: '', quantity: '' });
           state.members = null;
           drawMember(); drawItems(); drawFooter();
         } catch (e) {
           const text =
             e.code === 'waste_type_unavailable' ? 'A waste type is no longer active. Reload the page and try again.' :
-            e.code === 'invalid_weight' || e.code === 'items_required' ? 'Check the weights. Each line needs more than 0 kg.' :
+            e.code === 'invalid_weight' || e.code === 'invalid_quantity' || e.code === 'items_required' ? 'Check the amounts. Each line needs more than 0 kg or 0 items.' :
             e.code === 'member_not_found' ? 'That member no longer exists. Pick a different one.' :
             'Recording the deposit failed. Try again.';
           noteBox.replaceChildren(banner(text, true));
@@ -1172,20 +1198,26 @@
         const noteBox = el('div');
         const nameIn = textField(); nameIn.value = existing ? existing.name : ''; nameIn.maxLength = 120;
         const ppkIn = numberField('1'); ppkIn.value = existing ? existing.points_per_kg : '';
-        ppkIn.placeholder = 'Points per kg';
+        ppkIn.placeholder = 'Points per unit';
+        const unitIn = el('select', 'field');
+        for (const [v, l] of [['kg', 'Per kilogram'], ['item', 'Per item (usable goods)']]) {
+          const o = el('option', '', l); o.value = v; unitIn.append(o);
+        }
+        unitIn.value = existing && existing.unit === 'item' ? 'item' : 'kg';
         const active = existing ? checkbox('Accepted at the waste bank', existing.active) : null;
         return editorPanel({
           title: existing ? 'Edit price' : 'Add waste type',
           fields: [
             { label: 'Name', input: nameIn },
-            { label: 'Points per kilogram', input: ppkIn },
+            { label: 'Priced', input: unitIn },
+            { label: 'Points per kilogram or item', input: ppkIn },
           ],
           active,
           saveLabel: existing ? 'Save price' : 'Add waste type',
           noteBox,
           onBack: () => draw(),
           onSubmit: async () => {
-            const body = { name: nameIn.value, points_per_kg: ppkIn.value };
+            const body = { name: nameIn.value, points_per_kg: ppkIn.value, unit: unitIn.value };
             if (active) body.active = active.box.checked;
             try {
               if (existing) await api('/api/waste-types/' + existing.id, { method: 'PATCH', body: JSON.stringify(body) });
@@ -1195,7 +1227,7 @@
             } catch (e) {
               noteBox.replaceChildren(banner(
                 e.code === 'name_required' ? 'Give the waste type a name.' :
-                e.code === 'invalid_points_per_kg' ? 'Points per kilogram must be a number of 0 or more.' :
+                e.code === 'invalid_points_per_kg' ? 'Points per kilogram or item must be a number of 0 or more.' :
                 'Saving failed. Try again.', true));
             }
           },
@@ -1211,7 +1243,7 @@
         const listHost = el('div', 'mt-2');
         root.append(listHost);
         const lst = makeStates(listHost, { errorTitle: "Couldn't load prices", loadingText: 'Loading prices' });
-        lst.setEmpty('No waste types yet', 'Add the waste types your waste bank accepts and their price in points per kilogram.');
+        lst.setEmpty('No waste types yet', 'Add the waste types your waste bank accepts and their price in points per kilogram or per item.');
         lst.retry = load;
         async function load() {
           lst.show('loading');
@@ -1224,7 +1256,7 @@
               b.type = 'button';
               const left = el('div', 'min-w-0');
               left.append(el('p', 'text-body font-medium', t.name),
-                el('p', 'text-small text-muted', fmt(t.points_per_kg) + ' pts per kg'));
+                el('p', 'text-small text-muted', fmt(t.points_per_kg) + (t.unit === 'item' ? ' pts per item' : ' pts per kg')));
               const right = el('div', 'flex shrink-0 items-center gap-2');
               if (!t.active) right.append(badge('Retired'));
               b.append(left, right);
@@ -1443,7 +1475,7 @@
             const li = el('li', 'list-row justify-between');
             li.append(el('p', 'min-w-0 text-body', t.label),
               el('span', 'shrink-0 tabular-nums text-small text-muted',
-                kg(t.weight_g) + ' kg · ' + fmt(t.points) + ' pts'));
+                (t.quantity != null && !t.weight_g ? amount(t) : kg(t.weight_g) + ' kg') + ' · ' + fmt(t.points) + ' pts'));
             return li;
           }));
           types.append(list);
