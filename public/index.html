@@ -144,6 +144,51 @@
       return data;
     }
 
+    // Manager CSV export: fetched with the sign-in token in the header
+    // (never in the URL), then saved as a blob download.
+    async function downloadCsv(path, filename) {
+      const res = await fetch(path, { headers: HEADERS });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const url = URL.createObjectURL(await res.blob());
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.append(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 0);
+    }
+
+    // A secondary "Download CSV" button for the manager screens. getPath
+    // is read at click time so it follows the current filter; failures
+    // land in noteHost as the usual error banner and never disturb the
+    // list on screen.
+    function csvButton(getPath, prefix, noteHost) {
+      const btn = el('button', 'btn-secondary self-start', 'Download CSV');
+      btn.type = 'button';
+      btn.addEventListener('click', async () => {
+        noteHost.replaceChildren();
+        btn.disabled = true;
+        btn.textContent = 'Preparing CSV…';
+        try {
+          const tz = encodeURIComponent(Intl.DateTimeFormat().resolvedOptions().timeZone || '');
+          const p = n => String(n).padStart(2, '0');
+          const today = new Date();
+          const stamp = today.getFullYear() + '-' + p(today.getMonth() + 1) + '-' + p(today.getDate());
+          const path = getPath();
+          const join = path.includes('?') ? '&' : '?';
+          await downloadCsv(path + join + 'format=csv&tz=' + tz, prefix + '-' + stamp + '.csv');
+        } catch (e) {
+          console.error(String(e && e.stack || e));
+          noteHost.replaceChildren(banner("Couldn't download the CSV. The list still works. Try again.", true));
+        } finally {
+          btn.disabled = false;
+          btn.textContent = 'Download CSV';
+        }
+      });
+      return btn;
+    }
+
     // ── Tiny DOM helpers ───────────────────────────────────────────────────
     // Everything renders through textContent — member and reward names are
     // other people's input and never become HTML.
@@ -1013,8 +1058,12 @@
       sel.value = state.memberFilter;
       sel.addEventListener('change', () => { state.memberFilter = sel.value; load(); });
       filterRow.append(sel);
+      const csvNote = el('div');
+      const csvBtn = csvButton(
+        () => state.memberFilter ? '/api/deposits?member_id=' + encodeURIComponent(state.memberFilter) : '/api/deposits?all=1',
+        'reloop-deposits', csvNote);
       const host = el('div');
-      root.append(noteBox, filterRow, host);
+      root.append(noteBox, filterRow, csvBtn, csvNote, host);
 
       const st = makeStates(host, { errorTitle: "Couldn't load deposits", loadingText: 'Loading deposits' });
       st.setEmpty('No deposits yet', 'Recorded deposits across the neighborhood will appear here.');
@@ -1022,12 +1071,15 @@
 
       async function load() {
         st.show('loading');
+        csvBtn.hidden = true;
+        csvNote.replaceChildren();
         try {
           const q = state.memberFilter ? '/api/deposits?member_id=' + encodeURIComponent(state.memberFilter) : '/api/deposits?all=1';
           const d = await api(q);
           if (!d.deposits.length) { st.show('empty'); return; }
           st.listEl.replaceChildren(...d.deposits.map(x => depositDetails(x, { showMember: true, voidButton: voidDeposit })));
           st.show('list');
+          csvBtn.hidden = false;
         } catch (e) { console.error(String(e && e.stack || e)); st.show('error'); }
       }
 
@@ -1479,6 +1531,8 @@
             return li;
           }));
           types.append(list);
+          const csvNote = el('div');
+          types.append(csvButton(() => '/api/report', 'reloop-report', csvNote), csvNote);
 
           st.listEl.replaceChildren(tiles, lines, types);
           st.show('list');
