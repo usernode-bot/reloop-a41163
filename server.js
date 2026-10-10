@@ -1006,55 +1006,156 @@ app.patch('/api/members/:id', requireAdmin, async (req, res, next) => {
 // Neighborhood-level aggregates for the manager's Report tab. Voided
 // deposits count nowhere; by_type groups on the price-name snapshot
 // (deposit_items.label) so retired waste types still show their history.
+async function buildReport() {
+  const [dep, byType, misc] = await Promise.all([
+    // Waste, points and active members across all live deposits.
+    pool.query(`
+      SELECT COALESCE(SUM(i.weight_g), 0) AS waste_g,
+             COALESCE(SUM(i.points), 0) AS points_issued,
+             COUNT(DISTINCT d.member_id) AS members_active
+      FROM deposit_items i
+      JOIN deposits d ON d.id = i.deposit_id
+      WHERE d.voided = FALSE
+    `),
+    // Per waste type, grouped by the label snapshotted at record time.
+    pool.query(`
+      SELECT i.label, SUM(i.weight_g) AS weight_g, SUM(i.quantity) AS quantity, SUM(i.points) AS points,
+             COUNT(DISTINCT i.deposit_id) AS deposits
+      FROM deposit_items i
+      JOIN deposits d ON d.id = i.deposit_id
+      WHERE d.voided = FALSE
+      GROUP BY i.label
+      ORDER BY SUM(i.weight_g) DESC, SUM(i.points) DESC
+    `),
+    // Members, redemption and ledger-side figures in one pass.
+    pool.query(`
+      SELECT (SELECT COUNT(*) FROM members) AS members_total,
+             (SELECT COALESCE(SUM(points_balance), 0) FROM members) AS points_in_circulation,
+             (SELECT COALESCE(SUM(points_spent), 0) FROM redemptions WHERE status = 'picked_up') AS points_redeemed,
+             (SELECT COALESCE(SUM(points_spent), 0) FROM redemptions WHERE status = 'pending') AS points_pending
+    `),
+  ]);
+  const m = misc.rows[0];
+  return {
+    waste_g: parseInt(dep.rows[0].waste_g, 10),
+    points_issued: parseInt(dep.rows[0].points_issued, 10),
+    members_active: parseInt(dep.rows[0].members_active, 10),
+    members_total: parseInt(m.members_total, 10),
+    points_in_circulation: parseInt(m.points_in_circulation, 10),
+    points_redeemed: parseInt(m.points_redeemed, 10),
+    points_pending: parseInt(m.points_pending, 10),
+    by_type: byType.rows.map(r => ({
+      label: r.label,
+      weight_g: parseInt(r.weight_g, 10),
+      quantity: r.quantity === null ? null : parseInt(r.quantity, 10),
+      points: parseInt(r.points, 10),
+      deposits: parseInt(r.deposits, 10),
+    })),
+  };
+}
+
 app.get('/api/report', requireAdmin, async (req, res, next) => {
   try {
-    const [dep, byType, misc] = await Promise.all([
-      // Waste, points and active members across all live deposits.
-      pool.query(`
-        SELECT COALESCE(SUM(i.weight_g), 0) AS waste_g,
-               COALESCE(SUM(i.points), 0) AS points_issued,
-               COUNT(DISTINCT d.member_id) AS members_active
-        FROM deposit_items i
-        JOIN deposits d ON d.id = i.deposit_id
-        WHERE d.voided = FALSE
-      `),
-      // Per waste type, grouped by the label snapshotted at record time.
-      pool.query(`
-        SELECT i.label, SUM(i.weight_g) AS weight_g, SUM(i.quantity) AS quantity, SUM(i.points) AS points,
-               COUNT(DISTINCT i.deposit_id) AS deposits
-        FROM deposit_items i
-        JOIN deposits d ON d.id = i.deposit_id
-        WHERE d.voided = FALSE
-        GROUP BY i.label
-        ORDER BY SUM(i.weight_g) DESC, SUM(i.points) DESC
-      `),
-      // Members, redemption and ledger-side figures in one pass.
-      pool.query(`
-        SELECT (SELECT COUNT(*) FROM members) AS members_total,
-               (SELECT COALESCE(SUM(points_balance), 0) FROM members) AS points_in_circulation,
-               (SELECT COALESCE(SUM(points_spent), 0) FROM redemptions WHERE status = 'picked_up') AS points_redeemed,
-               (SELECT COALESCE(SUM(points_spent), 0) FROM redemptions WHERE status = 'pending') AS points_pending
-      `),
-    ]);
-    const m = misc.rows[0];
-    res.json({
-      report: {
-        waste_g: parseInt(dep.rows[0].waste_g, 10),
-        points_issued: parseInt(dep.rows[0].points_issued, 10),
-        members_active: parseInt(dep.rows[0].members_active, 10),
-        members_total: parseInt(m.members_total, 10),
-        points_in_circulation: parseInt(m.points_in_circulation, 10),
-        points_redeemed: parseInt(m.points_redeemed, 10),
-        points_pending: parseInt(m.points_pending, 10),
-        by_type: byType.rows.map(r => ({
-          label: r.label,
-          weight_g: parseInt(r.weight_g, 10),
-          quantity: r.quantity === null ? null : parseInt(r.quantity, 10),
-          points: parseInt(r.points, 10),
-          deposits: parseInt(r.deposits, 10),
-        })),
-      },
-    });
+    res.json({ report: await buildReport() });
+  } catch (err) { next(err); }
+});
+
+// ── CSV exports (admin) ─────────────────────────────────────────────────────
+
+// One CSV cell: quoted when needed, and a leading = + - @ (a spreadsheet
+// formula) is defused with an apostrophe, since names are members' input.
+function csvCell(v) {
+  if (v === null || v === undefined) return '';
+  let s = String(v);
+  if (typeof v === 'string' && /^[=+\-@\t\r]/.test(s)) s = "'" + s;
+  return /[",\r\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+}
+function csvLines(rows) {
+  return rows.map(r => r.map(csvCell).join(',')).join('\r\n') + '\r\n';
+}
+// Integer grams → kilograms as a plain number string (no float storage).
+function kgText(g) {
+  return (g / 1000).toFixed(3).replace(/\.?0+$/, '');
+}
+// The browser's IANA zone (?tz=), so dates match the screen; UTC otherwise.
+function csvZone(req) {
+  const tz = typeof req.query.tz === 'string' ? req.query.tz : '';
+  try {
+    if (tz) { new Intl.DateTimeFormat('en-CA', { timeZone: tz }); return tz; }
+  } catch {}
+  return 'UTC';
+}
+function dateText(d, tz) {
+  const p = Object.fromEntries(new Intl.DateTimeFormat('en-CA', {
+    timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+  }).formatToParts(d).map(x => [x.type, x.value]));
+  return `${p.year}-${p.month}-${p.day} ${p.hour}:${p.minute}`;
+}
+function sendCsv(res, name, now, tz, body) {
+  const stamp = dateText(now, tz).slice(0, 10);
+  res.set('Content-Type', 'text/csv; charset=utf-8');
+  res.set('Content-Disposition', `attachment; filename="${name}-${stamp}.csv"`);
+  res.set('Cache-Control', 'no-store');
+  // The BOM makes spreadsheet apps read member names as UTF-8.
+  res.send('﻿' + body);
+}
+
+// The Report screen as CSV: the summary figures, then the by-waste-type
+// rollup, each block with its own header row. Voided deposits count nowhere.
+app.get('/api/report.csv', requireAdmin, async (req, res, next) => {
+  try {
+    const r = await buildReport();
+    const tz = csvZone(req);
+    const summary = [
+      ['Measure', 'Value'],
+      ['Waste collected (kg)', kgText(r.waste_g)],
+      ['Points issued', r.points_issued],
+      ['Points redeemed', r.points_redeemed],
+      ['Members with deposits', r.members_active],
+      ['Members', r.members_total],
+      ['Points waiting for pickup', r.points_pending],
+      ['Points in circulation', r.points_in_circulation],
+    ];
+    const types = [['Waste type', 'Weight (kg)', 'Items', 'Points', 'Deposits']].concat(
+      r.by_type.map(t => [t.label, t.quantity !== null && !t.weight_g ? '' : kgText(t.weight_g), t.quantity === null ? '' : t.quantity, t.points, t.deposits])
+    );
+    sendCsv(res, 'reloop-report', req.now, tz, csvLines(summary) + '\r\n' + csvLines(types));
+  } catch (err) { next(err); }
+});
+
+// The manager's deposit history as CSV, one row per deposit line, with the
+// same ?member_id= filter as the Deposits screen. Unlike the screen (capped
+// at the latest 100) it carries the whole history. Voided deposits stay in,
+// marked in Status, exactly as the list shows them.
+app.get('/api/deposits.csv', requireAdmin, async (req, res, next) => {
+  try {
+    const params = [];
+    let where = '';
+    if (req.query.member_id) { where = 'WHERE d.member_id = $1'; params.push(intParamReq(req.query.member_id)); }
+    const { rows } = await pool.query(`
+      SELECT d.id, d.created_at, d.voided, m.display_name, m.username, m.house_no,
+             i.label, i.weight_g, i.quantity, i.points
+      FROM deposits d
+      JOIN members m ON m.id = d.member_id
+      JOIN deposit_items i ON i.deposit_id = d.id
+      ${where}
+      ORDER BY d.created_at DESC, d.id DESC, i.id
+    `, params);
+    const tz = csvZone(req);
+    const lines = [['Date', 'Deposit', 'Resident', 'House number', 'Waste type', 'Weight (kg)', 'Items', 'Points', 'Status']]
+      .concat(rows.map(r => [
+        dateText(r.created_at, tz),
+        r.id,
+        r.display_name || r.username,
+        r.house_no || '',
+        r.label,
+        r.quantity === null ? kgText(r.weight_g) : '',
+        r.quantity === null ? '' : r.quantity,
+        r.points,
+        r.voided ? 'Voided' : 'Recorded',
+      ]));
+    sendCsv(res, 'reloop-deposits', req.now, tz, csvLines(lines));
   } catch (err) { next(err); }
 });
 
