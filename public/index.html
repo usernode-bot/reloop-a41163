@@ -400,7 +400,9 @@
         .map(t => {
           const b = el('button', 'tab-btn');
           b.type = 'button';
-          if (t.id === current) b.setAttribute('aria-current', 'page');
+          // The read-only Prices screen is reached from Home and keeps Home
+          // highlighted in the tab bar.
+          if (t.id === (current === 'prices' ? 'home' : current)) b.setAttribute('aria-current', 'page');
           b.append(icon(t.icon, 'h-5 w-5'), el('span', '', t.label));
           b.addEventListener('click', () => { window.location.hash = '#/' + t.id; });
           return b;
@@ -431,6 +433,23 @@
       // The points card — the app's signature element.
       const card = el('section', 'card flex min-h-24 flex-col justify-center gap-1');
       root.append(card);
+
+      // Price list link — everyone sees it, guests included, since prices are
+      // public and it helps people decide to sort.
+      const priceList = el('ul', 'list');
+      const priceBtn = el('button', 'list-row w-full cursor-pointer justify-between text-left');
+      priceBtn.type = 'button';
+      const priceLeft = el('div', 'min-w-0');
+      priceLeft.append(
+        el('p', 'text-body font-medium', 'Price list'),
+        el('p', 'text-small text-muted', 'Points each waste type earns')
+      );
+      priceBtn.append(priceLeft, icon(ICONS.chevron, 'h-4 w-4 shrink-0 text-muted'));
+      priceBtn.addEventListener('click', () => go('prices'));
+      const priceLi = el('li');
+      priceLi.append(priceBtn);
+      priceList.append(priceLi);
+      root.append(priceList);
 
       // Recent deposits.
       const recent = el('section', 'flex flex-col gap-2');
@@ -522,6 +541,41 @@
           const d = await api('/api/deposits');
           if (!d.deposits.length) { st.show('empty'); return; }
           st.listEl.replaceChildren(...d.deposits.map(x => depositDetails(x)));
+          st.show('list');
+        } catch (e) { console.error(String(e && e.stack || e)); st.show('error'); }
+      }
+      await load();
+      return root;
+    };
+
+    // ── Prices (read-only, public) ─────────────────────────────────────────
+    // What each waste type earns. Reads the same public endpoint the record
+    // form reads, without ?all=1 and without touching state.wasteTypes, so
+    // the admin cache stays untouched and admins see active types only too.
+    routes.prices = async function pricesView() {
+      const root = el('section', 'flex flex-col gap-4');
+      root.append(el('h1', 'text-title', 'Prices'));
+      root.append(el('p', 'text-body text-muted',
+        'Points the waste bank gives for each waste type. The waste bank manager sets these prices.'));
+      const host = el('div');
+      root.append(host);
+      const st = makeStates(host, { errorTitle: "Couldn't load prices", loadingText: 'Loading prices' });
+      st.setEmpty('No prices yet', "The waste bank manager hasn't set any prices yet. Check back soon.");
+      st.retry = load;
+      async function load() {
+        st.show('loading');
+        try {
+          const d = await api('/api/waste-types');
+          if (!d.waste_types.length) { st.show('empty'); return; }
+          st.listEl.replaceChildren(...d.waste_types.map(t => {
+            const li = el('li', 'list-row justify-between');
+            li.append(
+              el('p', 'min-w-0 text-body font-medium', t.name),
+              el('span', 'shrink-0 tabular-nums text-body',
+                fmt(t.points_per_kg) + (t.unit === 'item' ? ' pts per item' : ' pts per kg'))
+            );
+            return li;
+          }));
           st.show('list');
         } catch (e) { console.error(String(e && e.stack || e)); st.show('error'); }
       }

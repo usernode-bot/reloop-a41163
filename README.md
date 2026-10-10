@@ -13,6 +13,8 @@ prices, manage the roster and the reward catalog, and hand out redemptions.
 - **Home** — current points balance, how much has been recycled so far, the
   three most recent deposits, and how the loop works.
 - **Deposits** — deposit history with the full per-waste-type breakdown.
+- **Price list** — opened from Home: every waste type the waste bank accepts
+  and its points per kilogram (or per item), read-only and always current.
 - **Rewards** — the catalog with stock; redeem points and track the pickup
   (Waiting for pickup / Picked up / Cancelled — cancelled redemptions refund
   the points automatically).

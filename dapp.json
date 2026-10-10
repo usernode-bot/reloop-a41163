@@ -26,6 +26,11 @@
       "expectText": "No deposits yet"
     },
     {
+      "name": "Prices list renders the seeded waste types",
+      "path": "/#/prices",
+      "expectText": "pts per kg"
+    },
+    {
       "name": "Profile renders",
       "path": "/#/profile",
       "expectText": "Profile"
