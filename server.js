@@ -230,6 +230,9 @@ async function migrate() {
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `);
+  // Opt-out of the monthly leaderboard on Home (NULL or FALSE = shown).
+  // Kilograms still count in the neighborhood totals either way.
+  await pool.query(`ALTER TABLE members ADD COLUMN IF NOT EXISTS leaderboard_opt_out BOOLEAN`);
   await pool.query(`
     CREATE TABLE IF NOT EXISTS deposits (
       id SERIAL PRIMARY KEY,
@@ -447,7 +450,7 @@ function cleanUnit(v) {
 
 function getMemberByUser(userId) {
   return pool.query(
-    `SELECT id, user_id, username, display_name, house_no, phone, is_admin, points_balance
+    `SELECT id, user_id, username, display_name, house_no, phone, is_admin, points_balance, leaderboard_opt_out
      FROM members WHERE user_id = $1`, [userId]
   ).then(r => r.rows[0] || null);
 }
@@ -504,6 +507,7 @@ function memberJson(m) {
     phone: m.phone,
     is_admin: m.is_admin,
     points_balance: m.points_balance,
+    leaderboard_opt_out: m.leaderboard_opt_out === true,
   };
 }
 
@@ -538,12 +542,14 @@ app.patch('/api/me', async (req, res, next) => {
     // left out keep their current value.
     await pool.query(`
       UPDATE members SET
-        display_name = $2, house_no = $3, phone = $4
+        display_name = $2, house_no = $3, phone = $4, leaderboard_opt_out = $5
       WHERE id = $1
     `, [m.id,
         'display_name' in req.body ? cleanText(req.body.display_name, 120) : m.display_name,
         'house_no' in req.body ? cleanText(req.body.house_no, 120) : m.house_no,
-        'phone' in req.body ? cleanText(req.body.phone, 40) : m.phone]);
+        'phone' in req.body ? cleanText(req.body.phone, 40) : m.phone,
+        // Boolean, never a "clear": set only when the body carries it.
+        'leaderboard_opt_out' in req.body ? req.body.leaderboard_opt_out === true : m.leaderboard_opt_out === true]);
     res.json({ member: memberJson(await getMemberByUser(req.user.id)) });
   } catch (err) { next(err); }
 });
@@ -1053,6 +1059,75 @@ app.get('/api/report', requireAdmin, async (req, res, next) => {
           points: parseInt(r.points, 10),
           deposits: parseInt(r.deposits, 10),
         })),
+      },
+    });
+  } catch (err) { next(err); }
+});
+
+// ── Neighborhood totals + monthly leaderboard (signed-in members) ──────────
+//
+// Home's "Recycled by the neighborhood" section. Aggregates only: no member
+// id, username, house number, phone or points balance ever leaves the server
+// here — the leaderboard carries a first name and kilograms, nothing else.
+// Voided deposits count nowhere and per-item lines (quantity set) carry no
+// kilograms, so both are filtered out of every figure.
+app.get('/api/neighbourhood', async (req, res, next) => {
+  try {
+    // The auth middleware lets guests through on GET, so the route checks
+    // this itself: totals need an account, like the points card.
+    if (!req.user) throw new ApiError(401, 'account_required');
+    // Month boundary from `req.now` (never SQL NOW()): a staging preview
+    // opened as of another moment must show that month.
+    const monthStart = "date_trunc('month', $1::timestamptz)";
+    const [tot, byType, board] = await Promise.all([
+      pool.query(`
+        SELECT COALESCE(SUM(i.weight_g) FILTER (WHERE d.created_at >= ${monthStart}), 0) AS month_g,
+               COALESCE(SUM(i.weight_g), 0) AS all_time_g,
+               ${monthStart} AS month_start
+        FROM deposit_items i JOIN deposits d ON d.id = i.deposit_id
+        WHERE d.voided = FALSE AND i.quantity IS NULL
+      `, [req.now]),
+      // Per waste type, all time, grouped on the label snapshotted at record
+      // time (matches /api/report).
+      pool.query(`
+        SELECT i.label, SUM(i.weight_g) AS weight_g
+        FROM deposit_items i JOIN deposits d ON d.id = i.deposit_id
+        WHERE d.voided = FALSE AND i.quantity IS NULL
+        GROUP BY i.label
+        HAVING SUM(i.weight_g) > 0
+        ORDER BY SUM(i.weight_g) DESC, i.label
+      `),
+      pool.query(`
+        SELECT SUM(i.weight_g) AS weight_g, m.display_name, m.username
+        FROM deposit_items i
+        JOIN deposits d ON d.id = i.deposit_id
+        JOIN members m ON m.id = d.member_id
+        WHERE d.voided = FALSE AND i.quantity IS NULL
+          AND d.created_at >= ${monthStart}
+          AND m.leaderboard_opt_out IS NOT TRUE
+        GROUP BY m.id, m.display_name, m.username
+        HAVING SUM(i.weight_g) > 0
+        ORDER BY SUM(i.weight_g) DESC
+        LIMIT 10
+      `, [req.now]),
+    ]);
+    // First name only: the first word of the display name, else of the
+    // username. Never a full name, house number or phone.
+    const firstName = (r) =>
+      ((cleanText(r.display_name, 120) || r.username).trim().split(/\s+/)[0] || '').slice(0, 40);
+    res.json({
+      neighbourhood: {
+        month_start: tot.rows[0].month_start,
+        month_g: parseInt(tot.rows[0].month_g, 10),
+        all_time_g: parseInt(tot.rows[0].all_time_g, 10),
+        by_type: byType.rows.map(r => ({
+          label: r.label,
+          weight_g: parseInt(r.weight_g, 10),
+        })),
+        leaderboard: board.rows
+          .map(r => ({ name: firstName(r), weight_g: parseInt(r.weight_g, 10) }))
+          .sort((a, b) => b.weight_g - a.weight_g || a.name.localeCompare(b.name))
+          .map((r, i) => ({ rank: i + 1, name: r.name, weight_g: r.weight_g })),
       },
     });
   } catch (err) { next(err); }

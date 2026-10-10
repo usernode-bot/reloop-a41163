@@ -454,7 +454,6 @@
       });
       howCard.append(steps);
       how.append(howCard);
-      root.append(how);
 
       await loadMe(true);
       renderTabbar(currentRoute());
@@ -478,6 +477,85 @@
         card.append(el('p', 'text-small text-muted',
           s ? kg(s.total_weight_g) + ' kg recycled · ' + fmt(s.deposit_count) + (s.deposit_count === 1 ? ' deposit' : ' deposits') : 'Your deposits will show here.'));
       }
+
+      // Recycled by the neighborhood — what everyone has put through the
+      // waste bank together. Signed-in members only: like the points card,
+      // it needs an account. Aggregates only, so no other member's points
+      // balance is ever visible here.
+      if (!state.guest && state.member) {
+        const hood = el('section', 'flex flex-col gap-2');
+        hood.append(el('h2', 'section-label', 'Recycled by the neighborhood'));
+        const hoodHost = el('div');
+        hood.append(hoodHost);
+        root.append(hood);
+
+        const hst = makeStates(hoodHost, {
+          errorTitle: "Couldn't load the neighborhood totals",
+          errorBody: 'Your points and deposits above still work. Check your connection and try again.',
+          loadingText: 'Loading the neighborhood totals',
+        });
+        hst.setEmpty('Nothing recycled yet', 'The neighborhood totals appear once the first deposit is recorded.');
+        hst.retry = loadHood;
+        async function loadHood() {
+          hst.show('loading');
+          try {
+            const d = (await api('/api/neighbourhood')).neighbourhood;
+            if (d.all_time_g === 0) { hst.show('empty'); return; }
+            // Summary, not a row list: the host gives up its .list chrome
+            // (cards must not sit inside a .list) and carries tiles + lists.
+            hst.listEl.className = 'flex flex-col gap-4';
+
+            // UTC so the label matches the server's month boundary.
+            const monthLabel = new Date(d.month_start).toLocaleDateString('en-US', { month: 'long', year: 'numeric', timeZone: 'UTC' });
+
+            const tiles = el('div', 'flex flex-wrap gap-2');
+            function tile(label, value) {
+              const c = el('div', 'card flex min-w-[45%] flex-1 flex-col gap-1');
+              c.append(el('p', 'text-small text-muted', label),
+                el('p', 'text-heading tabular-nums', value));
+              return c;
+            }
+            tiles.append(
+              tile(monthLabel, kg(d.month_g) + ' kg'),
+              tile('All time', kg(d.all_time_g) + ' kg')
+            );
+
+            const types = el('section', 'flex flex-col gap-2');
+            types.append(el('h2', 'section-label', 'By waste type, all time'));
+            const typeList = el('ul', 'list');
+            typeList.replaceChildren(...d.by_type.map(t => {
+              const li = el('li', 'list-row justify-between');
+              li.append(el('p', 'min-w-0 text-body', t.label),
+                el('span', 'shrink-0 tabular-nums text-small text-muted', kg(t.weight_g) + ' kg'));
+              return li;
+            }));
+            types.append(typeList);
+
+            const board = el('section', 'flex flex-col gap-2');
+            board.append(el('h2', 'section-label', 'Leaderboard, ' + monthLabel));
+            const boardList = el('ul', 'list');
+            if (d.leaderboard.length) {
+              boardList.replaceChildren(...d.leaderboard.map(row => {
+                const li = el('li', 'list-row');
+                li.append(
+                  el('span', 'flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-raised text-small font-medium text-muted', String(row.rank)),
+                  el('p', 'min-w-0 flex-1 text-body', row.name),
+                  el('span', 'shrink-0 tabular-nums text-small text-muted', kg(row.weight_g) + ' kg'));
+                return li;
+              }));
+            } else {
+              boardList.append(el('li', 'list-row text-small text-muted', 'No one on the leaderboard yet this month.'));
+            }
+            board.append(boardList, el('p', 'px-1 text-small text-muted',
+              'Ranked by kilograms deposited this month. First names only, never points. You can leave the leaderboard in Profile.'));
+
+            hst.listEl.replaceChildren(tiles, types, board);
+            hst.show('list');
+          } catch (e) { console.error(String(e && e.stack || e)); hst.show('error'); }
+        }
+        loadHood();
+      }
+      root.append(how);
 
       // Recent deposits list.
       recent.append(el('h2', 'section-label', 'Recent deposits'));
@@ -651,10 +729,14 @@
       const phoneIn = textField(); phoneIn.value = state.member.phone || '';
       phoneIn.maxLength = 40;
       phoneIn.placeholder = 'Optional';
+      const lb = checkbox('Show me on the monthly leaderboard', !state.member.leaderboard_opt_out);
       form.append(
         fieldRow('Display name', nameIn),
         fieldRow('House number', houseIn),
-        fieldRow('Phone', phoneIn)
+        fieldRow('Phone', phoneIn),
+        lb.wrap,
+        el('p', 'px-1 text-small text-muted',
+          'Only your first name and kilograms show there. Your points stay private either way.')
       );
       const save = el('button', 'btn-primary self-start', 'Save');
       save.type = 'submit';
@@ -665,7 +747,7 @@
         try {
           await api('/api/me', {
             method: 'PATCH',
-            body: JSON.stringify({ display_name: nameIn.value, house_no: houseIn.value, phone: phoneIn.value }),
+            body: JSON.stringify({ display_name: nameIn.value, house_no: houseIn.value, phone: phoneIn.value, leaderboard_opt_out: !lb.box.checked }),
           });
           note.replaceChildren(banner('Profile saved.'));
         } catch (_) {
