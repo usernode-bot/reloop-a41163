@@ -61,8 +61,13 @@ in the app. After that, managers manage each other from the Members screen.
 ## Out of scope for the MVP
 
 Multiple waste banks per app instance, Rupiah/cash payouts, photo proof and
-QR check-in, pickup scheduling, notifications, exports, resident
+QR check-in, pickup scheduling, notifications, resident
 self-reporting of deposits, and offline mode.
+
+Waste bank managers can download the deposits list and the Report tab as
+CSV files (a "Download CSV" button on each), for RT/RW reporting and
+spreadsheets; the export follows the member filter in use and is
+manager-only.
 
 ## Running it
 
