@@ -242,6 +242,35 @@
       return el('div', 'rounded-lg border px-4 py-3 text-small ' +
         (isError ? 'border-danger/40 text-danger' : 'border-line bg-raised text-fg'), text);
     }
+    // Manager CSV export: fetch with the token header (a plain link could
+    // not carry it), then hand the file to the browser as a download. The
+    // browser's time zone goes along so dates match the screen.
+    async function downloadCsv(path, button, noteBox) {
+      const label = button.textContent;
+      button.disabled = true;
+      button.textContent = 'Preparing CSV';
+      noteBox.replaceChildren();
+      try {
+        const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || '';
+        const res = await fetch(path + (path.includes('?') ? '&' : '?') + 'tz=' + encodeURIComponent(tz), { headers: HEADERS });
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        const m = /filename="([^"]+)"/.exec(res.headers.get('Content-Disposition') || '');
+        const url = URL.createObjectURL(await res.blob());
+        const a = el('a');
+        a.href = url;
+        a.download = m ? m[1] : 'reloop.csv';
+        document.body.append(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 10000);
+      } catch (e) {
+        console.warn('CSV export failed', String(e));
+        noteBox.replaceChildren(banner("Couldn't prepare the CSV. Check your connection and try again.", true));
+      } finally {
+        button.disabled = false;
+        button.textContent = label;
+      }
+    }
     function fieldRow(labelText, input) {
       const wrap = el('label', 'flex flex-col gap-1');
       wrap.append(el('span', 'px-1 text-small font-medium text-muted', labelText), input);
@@ -1013,8 +1042,14 @@
       sel.value = state.memberFilter;
       sel.addEventListener('change', () => { state.memberFilter = sel.value; load(); });
       filterRow.append(sel);
+      const exportBtn = el('button', 'btn-secondary self-start', 'Download CSV');
+      exportBtn.type = 'button';
+      exportBtn.hidden = true;
+      exportBtn.addEventListener('click', () => downloadCsv(
+        '/api/deposits.csv' + (state.memberFilter ? '?member_id=' + encodeURIComponent(state.memberFilter) : ''),
+        exportBtn, noteBox));
       const host = el('div');
-      root.append(noteBox, filterRow, host);
+      root.append(noteBox, filterRow, exportBtn, host);
 
       const st = makeStates(host, { errorTitle: "Couldn't load deposits", loadingText: 'Loading deposits' });
       st.setEmpty('No deposits yet', 'Recorded deposits across the neighborhood will appear here.');
@@ -1024,10 +1059,12 @@
         st.show('loading');
         try {
           const q = state.memberFilter ? '/api/deposits?member_id=' + encodeURIComponent(state.memberFilter) : '/api/deposits?all=1';
+          exportBtn.hidden = true;
           const d = await api(q);
           if (!d.deposits.length) { st.show('empty'); return; }
           st.listEl.replaceChildren(...d.deposits.map(x => depositDetails(x, { showMember: true, voidButton: voidDeposit })));
           st.show('list');
+          exportBtn.hidden = false;
         } catch (e) { console.error(String(e && e.stack || e)); st.show('error'); }
       }
 
@@ -1433,8 +1470,9 @@
     // them).
     async function reportView() {
       const root = el('div', 'flex flex-col gap-4');
+      const noteBox = el('div');
       const host = el('div');
-      root.append(host);
+      root.append(noteBox, host);
       const st = makeStates(host, { errorTitle: "Couldn't load the report", loadingText: 'Loading the report' });
       st.setEmpty('No deposits yet', 'The report appears once the first deposit is recorded.');
       st.retry = load;
@@ -1480,7 +1518,11 @@
           }));
           types.append(list);
 
-          st.listEl.replaceChildren(tiles, lines, types);
+          const exportBtn = el('button', 'btn-secondary self-start', 'Download CSV');
+          exportBtn.type = 'button';
+          exportBtn.addEventListener('click', () => downloadCsv('/api/report.csv', exportBtn, noteBox));
+
+          st.listEl.replaceChildren(exportBtn, tiles, lines, types);
           st.show('list');
         } catch (e) { console.error(String(e && e.stack || e)); st.show('error'); }
       }

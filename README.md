@@ -26,7 +26,10 @@ prices, manage the roster and the reward catalog, and hand out redemptions.
   price edits never reprice old deposits.
 - **Deposits** — everything recorded across the neighborhood, filterable by
   member; a mistyped deposit can be voided (blocked if the points were
-  already spent, so a balance never goes negative).
+  already spent, so a balance never goes negative). **Download CSV** exports
+  the whole history for the current member filter, one row per waste line
+  (date, resident, house number, waste type, weight in kg or item count,
+  points, and whether it was voided).
 - **Members** — the roster with balances; edit details, promote or demote
   managers (you can't demote yourself).
 - **Prices** — waste types and their points per kilogram; retiring a type
@@ -36,7 +39,8 @@ prices, manage the roster and the reward catalog, and hand out redemptions.
   restock).
 - **Report** — the neighborhood at a glance: total waste collected, points
   issued and redeemed, the roster size, and a per-waste-type rollup. Voided
-  deposits count nowhere.
+  deposits count nowhere. **Download CSV** exports the same summary figures
+  and per-waste-type rollup.
 
 ## Becoming the first manager
 
