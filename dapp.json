@@ -16,6 +16,11 @@
       "expectText": "Points"
     },
     {
+      "name": "Home shows the neighborhood totals and leaderboard",
+      "path": "/",
+      "expectText": "Recycled by the neighborhood"
+    },
+    {
       "name": "Rewards catalog renders with stock",
       "path": "/#/rewards",
       "expectText": "Staging demo reward"

@@ -160,8 +160,10 @@ Re-theme by changing the token values there, keeping every text pair at
   voids and refunds check the balance first.
 - **Private tables:** `members`, `deposits`, `deposit_items`, `redemptions`,
   `point_transactions` are `staging:private` (balances are financial data,
-  phone numbers personal). `waste_types` and `rewards` stay public. No
-  leaderboard: it would rank neighbors' balances in public.
+  phone numbers personal). `waste_types` and `rewards` stay public. The
+  Home leaderboard ranks **kilograms only, first names only**, with an
+  opt-out on Profile (`members.leaderboard_opt_out`) — it never shows a
+  points balance, a house number or a full name.
 - **The first waste bank manager** promotes themselves once with
   `ADMIN_SETUP_CODE` (a dapp.json secret) on the Profile screen; after that,
   managers promote/demote each other, and self-demotion is refused so the

@@ -11,13 +11,17 @@ prices, manage the roster and the reward catalog, and hand out redemptions.
 **Residents** (everyone signed in through Homeroom):
 
 - **Home** — current points balance, how much has been recycled so far, the
-  three most recent deposits, and how the loop works.
+  three most recent deposits, what the **neighborhood** has recycled together
+  (kilograms this month and all time, by waste type) and the **monthly
+  leaderboard** (kilograms only, first names only), plus how the loop works.
 - **Deposits** — deposit history with the full per-waste-type breakdown.
 - **Rewards** — the catalog with stock; redeem points and track the pickup
   (Waiting for pickup / Picked up / Cancelled — cancelled redemptions refund
   the points automatically).
-- **Profile** — display name, house number and optional phone; plus the
-  one-time **waste bank manager setup** (below).
+- **Profile** — display name, house number and optional phone; the
+  **leaderboard opt-out** (untick to leave the monthly leaderboard; your
+  kilograms still count in the totals); plus the one-time **waste bank
+  manager setup** (below).
 
 **Waste bank managers** (the **Admin** tab):
 
