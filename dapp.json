@@ -57,5 +57,9 @@
       "visual": true,
       "impact": ["public/**", "server.js"]
     }
-  ]
+  ],
+  "icon": {
+    "image": "brand/icon.png",
+    "emoji": "♻️"
+  }
 }
