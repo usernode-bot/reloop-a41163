@@ -1,5 +1,4 @@
 const express = require('express');
-const crypto = require('crypto');
 const path = require('path');
 const { Pool } = require('pg');
 const jwt = require('jsonwebtoken');
@@ -39,6 +38,12 @@ const GUEST_PUBLIC_KEY = (process.env.USERNODE_GUEST_JWT_PUBLIC_KEY || '')
 const PUBLIC_API_PATHS = new Set(['/health']);
 
 app.use(express.json());
+
+// Erasing and exporting a person's rows when they delete their Homeroom
+// account. The platform sends those two requests with a token of its own
+// (`x-usernode-platform-token`), never a person's sign-in token, so they are
+// mounted here — before the sign-in check below.
+require('./usernode-user-data')(app, pool);
 
 // The platform's three centrally hosted files — the bridge, the native UI
 // kit and the Tailwind runtime — are reachable at these paths on this app's
@@ -84,12 +89,10 @@ app.get(/^\/usernode-(?:bridge|native|tailwind)\//, async (req, res) => {
 // "Now" for this request, as a Date: `req.now`, set for every request by
 // the middleware below. Read the day and the time through it (and
 // `usernode.now()` in the page), never `new Date()` or SQL's NOW(),
-// wherever they decide what shows: a reminder, a rota, a deadline.
-// Production always gets the real time. A staging preview may be shown as of
-// a chosen moment: the platform opens it with `?un-now=<ISO time>`, and the
-// page sends `usernode.now()` on as the `x-usernode-now` header. Only a
-// staging container reads either. See "Time-dependent features" in the
-// platform conventions.
+// wherever they decide what shows. Production always gets the real time. A
+// staging preview may be shown as of a chosen moment: the platform opens it
+// with `?un-now=<ISO time>`, and the page sends `usernode.now()` on as the
+// `x-usernode-now` header. Only a staging container reads either.
 const IS_STAGING = process.env.USERNODE_ENV === 'staging';
 const PREVIEW_NOW = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?(?:Z|[+-]\d{2}:\d{2})$/;
 function requestNow(req) {
@@ -146,21 +149,17 @@ app.use((req, res, next) => {
   next();
 });
 
-// ── ReLoop — digital waste bank ─────────────────────────────────────────────
+// ── ReLoop — one neighborhood's exchange ───────────────────────────────────
 //
-// One neighborhood waste bank. Residents deposit sorted waste; waste bank
-// managers (admins) record deposits, set waste-type prices, manage rewards
-// and hand out redemptions. Points are the only currency (integer points,
-// weights as integer grams — never floats).
+// Neighbors post things they no longer need — for free, to swap, or cheap —
+// and ask each other for them. One post is one "loop": Available, then
+// Reserved when the owner accepts a request, then Done once it has changed
+// hands. Impact counts the loops that closed and the grams of waste they
+// kept out of the bin.
 //
-// The first manager promotes themselves once with a shared setup code
-// (ADMIN_SETUP_CODE, configured in the app's Secrets); from then on managers
-// manage each other. Guest visitors can read the catalog; every write needs
-// an account, which the platform's auth middleware above already enforces.
-
-// The shared secret the neighborhood's first manager uses once to claim the
-// role. Declared in dapp.json's secrets; unset value = setup not available.
-const ADMIN_SETUP_CODE = process.env.ADMIN_SETUP_CODE || '';
+// Weights are integer grams, never floats: a post's estimated weight comes
+// from its category (CATEGORY_WEIGHT_G), so Impact can report kilograms
+// without asking anybody to weigh anything.
 
 // An error with an HTTP status and a stable code the frontend can show a
 // sentence for. Anything else is an unexpected failure and answers 500.
@@ -173,6 +172,58 @@ class ApiError extends Error {
   }
 }
 
+// Pickup areas: the RTs of the one neighborhood this app serves, laid along
+// its street. The walk between neighboring RTs is about ZONE_SPACING_M, so
+// the feed can show how far an item is without asking anyone for their
+// location.
+const ZONES = [
+  { id: 'rt01', label: 'RT 01' },
+  { id: 'rt02', label: 'RT 02' },
+  { id: 'rt03', label: 'RT 03' },
+  { id: 'rt04', label: 'RT 04' },
+  { id: 'rt05', label: 'RT 05' },
+  { id: 'rt06', label: 'RT 06' },
+];
+const ZONE_IDS = ZONES.map(z => z.id);
+const ZONE_SPACING_M = 150;
+
+const CATEGORIES = [
+  { id: 'clothes', label: 'Clothes' },
+  { id: 'electronics', label: 'Electronics' },
+  { id: 'furniture', label: 'Furniture' },
+  { id: 'books', label: 'Books' },
+  { id: 'kitchen', label: 'Kitchen' },
+];
+const CATEGORY_IDS = new Set(CATEGORIES.map(c => c.id));
+
+// A rough weight per category, in grams, used only to estimate the waste an
+// item keeps out of the bin. Deliberately coarse: it is a story, not a scale.
+const CATEGORY_WEIGHT_G = {
+  clothes: 500,
+  electronics: 2000,
+  furniture: 15000,
+  books: 1000,
+  kitchen: 1500,
+};
+
+const CONDITIONS = [
+  { id: 'like_new', label: 'Like new' },
+  { id: 'good', label: 'Good' },
+  { id: 'worn', label: 'Worn' },
+];
+const CONDITION_IDS = new Set(CONDITIONS.map(c => c.id));
+
+const LISTING_TYPES = [
+  { id: 'free', label: 'Free' },
+  { id: 'swap', label: 'Swap' },
+  { id: 'cheap', label: 'Cheap' },
+];
+const LISTING_TYPE_IDS = new Set(LISTING_TYPES.map(t => t.id));
+
+const REPORT_REASONS = new Set(['prohibited', 'spam', 'misleading', 'other']);
+// An item is hidden from the feed once this many different people report it.
+const REPORT_HIDE_AT = 3;
+
 app.get('/health', (_req, res) => res.json({ status: 'ok' }));
 
 // The template shipped no favicon file; index.html carries an inline SVG
@@ -184,17 +235,93 @@ app.get('/favicon.ico', (_req, res) => res.status(204).end());
 
 // ── Schema (idempotent, applied on boot) ────────────────────────────────────
 //
-// Public tables: `waste_types` and `rewards` — neighborhood reference data
-// (prices, catalog) a stranger could safely see.
+// Public tables: `items` and `item_photos` — the neighborhood's listings,
+// which every resident (and a guest looking around) can see.
 //
 // Private tables (`staging:private` — staging copies them schema-only):
-// `members` (points balances are financial data, phone numbers personal),
-// `deposits`/`deposit_items`, `redemptions` and `point_transactions` (the
-// audit ledger). No public table carries a foreign key to a private one;
-// private→public FKs (deposit_items→waste_types, redemptions→rewards) are
-// fine because public tables copy WITH their rows to staging.
+// `profiles` (a person's pickup area), `item_requests` (one-to-one messages
+// between two neighbors) and `item_reports` (who reported what, and why).
+// Every private→public foreign key is fine (item_requests→items,
+// item_reports→items); no public table points at a private one.
+//
+// The tables of the earlier waste-bank product (members, deposits,
+// deposit_items, redemptions, point_transactions, waste_types, rewards,
+// collection_schedule) are still created so an existing deployment's history
+// is never destroyed, but no route reads or writes them any more, and
+// seeder or user-deletion code treats them as legacy.
 async function migrate() {
   await pool.query(`DROP TABLE IF EXISTS presses`);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS profiles (
+      user_id INTEGER PRIMARY KEY,
+      username TEXT NOT NULL,
+      pickup_area TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS items (
+      id SERIAL PRIMARY KEY,
+      owner_id INTEGER NOT NULL,
+      owner_username TEXT NOT NULL,
+      title TEXT NOT NULL,
+      description TEXT,
+      item_condition TEXT NOT NULL,
+      category TEXT NOT NULL,
+      pickup_area TEXT NOT NULL,
+      listing_type TEXT NOT NULL,
+      price INTEGER,
+      status TEXT NOT NULL DEFAULT 'available',
+      reserved_for INTEGER,
+      reserved_username TEXT,
+      weight_g INTEGER NOT NULL DEFAULT 0,
+      hidden BOOLEAN NOT NULL DEFAULT FALSE,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      done_at TIMESTAMPTZ
+    )
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS item_photos (
+      id SERIAL PRIMARY KEY,
+      item_id INTEGER NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+      url TEXT NOT NULL,
+      position INTEGER NOT NULL DEFAULT 0
+    )
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS item_requests (
+      id SERIAL PRIMARY KEY,
+      item_id INTEGER NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+      requester_id INTEGER NOT NULL,
+      requester_username TEXT NOT NULL,
+      message TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      resolved_at TIMESTAMPTZ
+    )
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS item_reports (
+      id SERIAL PRIMARY KEY,
+      item_id INTEGER NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+      reporter_id INTEGER NOT NULL,
+      reason TEXT NOT NULL,
+      note TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (item_id, reporter_id)
+    )
+  `);
+  for (const t of ['profiles', 'item_requests', 'item_reports']) {
+    await pool.query(`COMMENT ON TABLE ${t} IS 'staging:private'`);
+  }
+  await pool.query(`CREATE INDEX IF NOT EXISTS items_feed ON items (created_at DESC) WHERE hidden = FALSE`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS items_owner ON items (owner_id, created_at DESC)`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS item_photos_item ON item_photos (item_id, position)`);
+  await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS item_requests_open ON item_requests (item_id, requester_id) WHERE status = 'pending'`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS item_requests_item ON item_requests (item_id, created_at DESC)`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS item_requests_requester ON item_requests (requester_id, created_at DESC)`);
+
+  // Legacy (the earlier waste-bank product). Kept, not used.
   await pool.query(`
     CREATE TABLE IF NOT EXISTS waste_types (
       id SERIAL PRIMARY KEY,
@@ -204,8 +331,6 @@ async function migrate() {
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `);
-  // 'kg' types are priced per kilogram; 'item' types (usable goods) per piece.
-  // points_per_kg holds the price per unit either way.
   await pool.query(`ALTER TABLE waste_types ADD COLUMN IF NOT EXISTS unit TEXT NOT NULL DEFAULT 'kg'`);
   await pool.query(`
     CREATE TABLE IF NOT EXISTS rewards (
@@ -230,8 +355,6 @@ async function migrate() {
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `);
-  // Opt-out of the monthly leaderboard on Home (NULL or FALSE = shown).
-  // Kilograms still count in the neighborhood totals either way.
   await pool.query(`ALTER TABLE members ADD COLUMN IF NOT EXISTS leaderboard_opt_out BOOLEAN`);
   await pool.query(`
     CREATE TABLE IF NOT EXISTS deposits (
@@ -254,7 +377,6 @@ async function migrate() {
       points INTEGER NOT NULL DEFAULT 0
     )
   `);
-  // Piece count for per-item lines (weight_g is 0 on those); NULL on kg lines.
   await pool.query(`ALTER TABLE deposit_items ADD COLUMN IF NOT EXISTS quantity INTEGER`);
   await pool.query(`
     CREATE TABLE IF NOT EXISTS redemptions (
@@ -279,9 +401,6 @@ async function migrate() {
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `);
-  // The waste bank's weekly opening: one row (id 1). `days` are weekdays,
-  // 0 = Sunday … 6 = Saturday; times are wall-clock 'HH:MM'. Public: it is
-  // the notice on the waste bank's door, and it names nobody.
   await pool.query(`
     CREATE TABLE IF NOT EXISTS collection_schedule (
       id INTEGER PRIMARY KEY CHECK (id = 1),
@@ -294,141 +413,133 @@ async function migrate() {
   for (const t of ['members', 'deposits', 'deposit_items', 'redemptions', 'point_transactions']) {
     await pool.query(`COMMENT ON TABLE ${t} IS 'staging:private'`);
   }
-  await pool.query(`CREATE INDEX IF NOT EXISTS deposits_member_created ON deposits (member_id, created_at DESC)`);
-  await pool.query(`CREATE INDEX IF NOT EXISTS redemptions_member_created ON redemptions (member_id, created_at DESC)`);
-  await pool.query(`CREATE INDEX IF NOT EXISTS point_tx_member ON point_transactions (member_id, created_at DESC)`);
 }
 
 // ── Staging seed data ───────────────────────────────────────────────────────
 //
 // Runs on every staging boot, idempotent, obviously fake ("Staging demo …"),
-// fixed high ids so real rows can never collide. Never references a real
-// user: the visitor's own member row is created lazily with 0 points, which
-// is the honest production state. Balances below match the seeded ledger
-// exactly (deposits 284 − redemptions 180 = 104 for the demo user; the
-// voided deposit's +32/−32 pair nets to zero).
+// fixed high ids so real rows can never collide. The people are fake platform
+// identities (staging-demo-*), never whoever opened the preview, and none of
+// them is the viewing account. Photos are small inline SVG illustrations:
+// staging has no platform file storage, so a real upload URL would 404.
+const DEMO_GLYPHS = {
+  clothes: 'M20.38 3.46 16 2a4 4 0 0 1-8 0L3.62 3.46a2 2 0 0 0-1.34 2.23l.58 3.47a1 1 0 0 0 .99.84H6v10c0 1.1.9 2 2 2h8a2 2 0 0 0 2-2V10h2.15a1 1 0 0 0 .99-.84l.58-3.47a2 2 0 0 0-1.34-2.23z',
+  electronics: 'M7 2h10a2 2 0 0 1 2 2v16a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2Z M11 18h2',
+  furniture: 'M19 9V6a2 2 0 0 0-2-2H7a2 2 0 0 0-2 2v3 M3 16a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-5a2 2 0 0 0-4 0v2H7v-2a2 2 0 0 0-4 0Z M5 18v2 M19 18v2',
+  books: 'M12 7v14 M3 18a1 1 0 0 1-1-1V4a2 2 0 0 1 2-2h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a2 2 0 0 1 2 2v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z',
+  kitchen: 'M3 2v7c0 1.1.9 2 2 2h4a2 2 0 0 0 2-2V2 M7 2v20 M21 15V2a5 5 0 0 0-5 5v6c0 1.1.9 2 2 2h3Zm0 0v7',
+};
+const DEMO_COLOURS = {
+  clothes: ['#be123c', '#881337'],
+  electronics: ['#1d4ed8', '#1e3a8a'],
+  furniture: ['#b45309', '#78350f'],
+  books: ['#7e22ce', '#581c87'],
+  kitchen: ['#0f766e', '#134e4a'],
+};
+function demoPhoto(category) {
+  const [a, b] = DEMO_COLOURS[category] || ['#334155', '#0f172a'];
+  const paths = DEMO_GLYPHS[category] || DEMO_GLYPHS.books;
+  const svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 400">' +
+    '<defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1">' +
+    '<stop offset="0" stop-color="' + a + '"/><stop offset="1" stop-color="' + b + '"/>' +
+    '</linearGradient></defs>' +
+    '<rect width="400" height="400" fill="url(#g)"/>' +
+    // One path element holding every subpath of the glyph: split into
+    // several elements, the ones after the first would lose the stroke
+    // attributes and render as filled blobs.
+    '<path d="' + paths + '" fill="none" stroke="#ffffff" ' +
+    'stroke-opacity="0.5" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" ' +
+    'transform="translate(80 80) scale(10)"/></svg>';
+  return 'data:image/svg+xml,' + encodeURIComponent(svg);
+}
+
 async function seedStaging() {
-  const wasteTypes = [
-    [900001, 'Staging demo: PET plastic bottles', 15],
-    [900002, 'Staging demo: Paper', 8],
-    [900003, 'Staging demo: Cardboard', 10],
-    [900004, 'Staging demo: Aluminium cans', 40],
-    [900005, 'Staging demo: Glass bottles', 5],
-    [900006, 'Staging demo: Used cooking oil', 60],
+  // Fake people of the neighborhood, each with a pickup area of their own.
+  const people = [
+    [9000001, 'staging-demo-ani', 'rt02'],
+    [9000002, 'staging-demo-budi', 'rt04'],
+    [9000003, 'staging-demo-citra', 'rt01'],
   ];
-  for (const [id, name, ppk] of wasteTypes) {
+  for (const [id, username, area] of people) {
     await pool.query(
-      `INSERT INTO waste_types (id, name, points_per_kg) VALUES ($1, $2, $3) ON CONFLICT (id) DO NOTHING`,
-      [id, name, ppk]
-    );
+      `INSERT INTO profiles (user_id, username, pickup_area) VALUES ($1, $2, $3)
+       ON CONFLICT (user_id) DO NOTHING`, [id, username, area]);
   }
-  await pool.query(
-    `INSERT INTO waste_types (id, name, points_per_kg, unit) VALUES (900007, 'Staging demo: Used clothes (per item)', 15, 'item')
-     ON CONFLICT (id) DO NOTHING`
-  );
-  const rewards = [
-    [900001, 'Staging demo reward: Rice 1 kg', 500, 20],
-    [900002, 'Staging demo reward: Cooking oil 1 L', 300, 10],
-    [900003, 'Staging demo reward: Bath soap', 120, 50],
-    [900004, 'Staging demo reward: Eggs (10)', 250, 0],
-    [900005, 'Staging demo reward: Reusable bag', 60, 30],
+
+  // [id, owner, title, description, condition, category, area, type, price,
+  //  status, reserved_for, days_ago, days_ago_done]
+  const items = [
+    [9000101, 9000001, 'Staging demo: Denim jacket',
+      'Size M, washed and ready to wear. Too small for me now.',
+      'good', 'clothes', 'rt02', 'free', null, 'available', null, 3, null],
+    [9000102, 9000002, 'Staging demo: Desk lamp',
+      'Warm white bulb included. Would swap for a standing fan.',
+      'like_new', 'electronics', 'rt04', 'swap', null, 'available', null, 5, null],
+    [9000103, 9000003, 'Staging demo: Wooden bookshelf',
+      'Three shelves, solid wood. Bring a friend to carry it.',
+      'good', 'furniture', 'rt01', 'free', null, 'available', null, 1, null],
+    [9000104, 9000001, 'Staging demo: Stack of novels',
+      'Eight paperbacks, good holiday reading. Happy to swap for cookbooks.',
+      'good', 'books', 'rt02', 'swap', null, 'available', null, 7, null],
+    [9000105, 9000002, 'Staging demo: Rice cooker',
+      'Works well, one small scratch on the lid. Still has its inner pot.',
+      'good', 'kitchen', 'rt04', 'cheap', 75000, 'available', null, 2, null],
+    [9000106, 9000001, 'Staging demo: Phone charger and cable',
+      'Spare USB-C charger, 20 W. Cable is a little short.',
+      'like_new', 'electronics', 'rt02', 'free', null, 'available', null, 4, null],
+    [9000107, 9000003, 'Staging demo: Cotton shirts, size M',
+      'Three plain shirts, worn but no stains. Good for gardening.',
+      'worn', 'clothes', 'rt01', 'cheap', 25000, 'available', null, 6, null],
+    [9000108, 9000001, "Staging demo: Children's picture books",
+      'Six picture books for ages 3 to 6. All pages intact.',
+      'good', 'books', 'rt02', 'free', null, 'reserved', 9000002, 8, null],
+    [9000109, 9000002, 'Staging demo: Ceramic bowls, set of 4',
+      'Four matching bowls, no chips. Handed over last week.',
+      'like_new', 'kitchen', 'rt04', 'swap', null, 'done', 9000001, 12, 5],
+    [9000110, 9000003, 'Staging demo: Foldable study chair',
+      'Folds flat, good for a small room.',
+      'good', 'furniture', 'rt01', 'free', null, 'reserved', 9000001, 2, null],
   ];
-  for (const [id, name, cost, stock] of rewards) {
-    await pool.query(
-      `INSERT INTO rewards (id, name, points_cost, stock) VALUES ($1, $2, $3, $4) ON CONFLICT (id) DO NOTHING`,
-      [id, name, cost, stock]
-    );
-  }
-  // user_id equals id here on purpose: these are fake platform identities.
-  const members = [
-    [900001, 'staging-demo-manager', 'Staging Demo Manager', 'House 01 / RT 01', true, 0],
-    [900002, 'staging-demo-user', 'Staging Demo User', 'House 12 / RT 03', false, 104],
-    [900003, 'staging-demo-neighbour', 'Staging Demo Neighbour', 'House 07 / RT 02', false, 184],
-  ];
-  for (const [id, username, displayName, houseNo, isAdmin, balance] of members) {
-    await pool.query(
-      `INSERT INTO members (id, user_id, username, display_name, house_no, is_admin, points_balance)
-       VALUES ($1, $1, $2, $3, $4, $5, $6) ON CONFLICT (user_id) DO NOTHING`,
-      [id, username, displayName, houseNo, isAdmin, balance]
-    );
-  }
-  // [deposit id, member id, total, days ago, [[waste_type id, weight_g, points], …]]
-  const deposits = [
-    [900101, 900002, 52, 21, [[900001, 1500, 22], [900003, 3000, 30]]],
-    [900102, 900002, 32, 14, [[900004, 800, 32]]],
-    [900103, 900002, 120, 9, [[900006, 2000, 120]]],
-    [900104, 900002, 80, 4, [[900002, 10000, 80]]],
-    [900105, 900003, 69, 12, [[900001, 2500, 37], [900002, 4000, 32]]],
-    [900106, 900003, 55, 5, [[900003, 5500, 55]]],
-    // A per-item deposit so staging shows a Pieces line (weight_g is 0 there).
-    [900108, 900003, 60, 7, [[900007, 0, 60, 4]]],
-  ];
-  for (const [id, memberId, total, daysAgo, items] of deposits) {
-    const ins = await pool.query(
-      `INSERT INTO deposits (id, member_id, recorded_by, total_points, created_at)
-       VALUES ($1, $2, 900001, $3, NOW() - ($4 || ' days')::interval) ON CONFLICT (id) DO NOTHING RETURNING id`,
-      [id, memberId, total, daysAgo]
-    );
-    if (!ins.rows.length) continue; // already seeded; skip items + ledger
-    for (const [wtId, weightG, points, quantity] of items) {
-      const found = wasteTypes.find(w => w[0] === wtId);
-      const label = found ? found[1] : 'Staging demo: Used clothes (per item)';
-      await pool.query(
-        `INSERT INTO deposit_items (deposit_id, waste_type_id, label, weight_g, quantity, points) VALUES ($1, $2, $3, $4, $5, $6)`,
-        [id, wtId, label, weightG, quantity ?? null, points]
-      );
-    }
-    await pool.query(
-      `INSERT INTO point_transactions (member_id, delta, reason, ref_type, ref_id, created_at)
-       VALUES ($1, $2, 'deposit', 'deposit', $3, NOW() - ($4 || ' days')::interval)`,
-      [memberId, total, id, daysAgo]
-    );
-  }
-  // Redemptions: one still waiting for pickup, one already handed over.
-  const redemptions = [
-    [900401, 900002, 900003, 120, 'pending', 2, null],
-    [900402, 900002, 900005, 60, 'picked_up', 6, 5],
-  ];
-  for (const [id, memberId, rewardId, cost, status, daysAgo, resolvedDaysAgo] of redemptions) {
-    const ins = await pool.query(
-      `INSERT INTO redemptions (id, member_id, reward_id, points_spent, status, handled_by, created_at, resolved_at)
-       VALUES ($1, $2, $3, $4, $5, $6, NOW() - make_interval(days => $7),
-               CASE WHEN $8::int IS NULL THEN NULL ELSE NOW() - make_interval(days => $8::int) END)
-       ON CONFLICT (id) DO NOTHING RETURNING id`,
-      [id, memberId, rewardId, cost, status, status === 'picked_up' ? 900001 : null, daysAgo, resolvedDaysAgo]
-    );
+  for (const [id, owner, title, description, condition, category, area, type,
+    price, status, reservedFor, daysAgo, doneAgo] of items) {
+    const ins = await pool.query(`
+      INSERT INTO items (id, owner_id, owner_username, title, description,
+        item_condition, category, pickup_area, listing_type, price, status,
+        reserved_for, reserved_username, weight_g, done_at, created_at)
+      VALUES ($1, $2, (SELECT username FROM profiles WHERE user_id = $2), $3, $4,
+        $5, $6, $7, $8, $9, $10, $11,
+        (SELECT username FROM profiles WHERE user_id = $11), $12,
+        CASE WHEN $13::int IS NULL THEN NULL ELSE NOW() - make_interval(days => $13::int) END,
+        NOW() - make_interval(days => $14::int))
+      ON CONFLICT (id) DO NOTHING RETURNING id`,
+      [id, owner, title, description, condition, category, area, type, price,
+        status, reservedFor, CATEGORY_WEIGHT_G[category], doneAgo, daysAgo]);
     if (!ins.rows.length) continue;
     await pool.query(
-      `INSERT INTO point_transactions (member_id, delta, reason, ref_type, ref_id, created_at)
-       VALUES ($1, $2, 'redemption', 'redemption', $3, NOW() - ($4 || ' days')::interval)`,
-      [memberId, -cost, id, daysAgo]
-    );
+      `INSERT INTO item_photos (item_id, url, position) VALUES ($1, $2, 0)`,
+      [id, demoPhoto(category)]);
   }
-  // One voided deposit so staging shows that voids are excluded from the
-  // report: its +32/−32 ledger pair nets to zero, so the demo balance (104)
-  // and the report totals (29,300 g / 468 pts) are unchanged.
-  const voidIns = await pool.query(
-    `INSERT INTO deposits (id, member_id, recorded_by, total_points, voided, voided_at, created_at)
-     VALUES (900107, 900002, 900001, 32, TRUE, NOW() - make_interval(days => 3), NOW() - make_interval(days => 3))
-     ON CONFLICT (id) DO NOTHING RETURNING id`
-  );
-  if (voidIns.rows.length) {
-    await pool.query(
-      `INSERT INTO deposit_items (deposit_id, waste_type_id, label, weight_g, points)
-       VALUES (900107, 900004, 'Staging demo: Aluminium cans', 800, 32)`
-    );
-    await pool.query(
-      `INSERT INTO point_transactions (member_id, delta, reason, ref_type, ref_id, created_at)
-       VALUES (900002, 32, 'deposit', 'deposit', 900107, NOW() - make_interval(days => 3))`
-    );
-    await pool.query(
-      `INSERT INTO point_transactions (member_id, delta, reason, ref_type, ref_id, created_at)
-       VALUES (900002, -32, 'void', 'deposit', 900107, NOW() - make_interval(days => 3))`
-    );
+
+  // [id, item, requester, message, status, days_ago]
+  const requests = [
+    [9000201, 9000108, 9000002, 'Could I pick these up on Saturday morning?', 'accepted', 7],
+    [9000202, 9000110, 9000001, 'Is this still around? I can collect tonight.', 'pending', 1],
+    [9000203, 9000109, 9000001, 'My kids would love these. Thank you!', 'completed', 11],
+  ];
+  for (const [id, itemId, requester, message, status, daysAgo] of requests) {
+    await pool.query(`
+      INSERT INTO item_requests (id, item_id, requester_id, requester_username,
+        message, status, resolved_at, created_at)
+      VALUES ($1, $2, $3, (SELECT username FROM profiles WHERE user_id = $3), $4, $5,
+        CASE WHEN $5 = 'pending' THEN NULL ELSE NOW() - make_interval(days => $6::int) END,
+        NOW() - make_interval(days => $6::int))
+      ON CONFLICT (id) DO NOTHING`,
+      [id, itemId, requester, message, status, daysAgo]);
   }
+
   // Explicit ids bypass the sequences; push each sequence past the highest
   // seeded id so real inserts can never collide with demo rows.
-  for (const t of ['waste_types', 'rewards', 'members', 'deposits', 'deposit_items', 'redemptions', 'point_transactions']) {
+  for (const t of ['items', 'item_photos', 'item_requests', 'item_reports']) {
     await pool.query(
       `SELECT setval(pg_get_serial_sequence('${t}', 'id'), GREATEST((SELECT COALESCE(MAX(id), 1) FROM ${t}), 1))`
     );
@@ -453,44 +564,23 @@ async function withTx(fn) {
   }
 }
 
-// Points for one deposit line, computed SERVER-side from the current price:
-// `floor(weight_g × points_per_kg / 1000)`. The client only previews this.
-// Per-item types instead use `quantity × points_per_item`.
-function pointsFor(weightG, pointsPerKg) {
-  return Math.floor((weightG * pointsPerKg) / 1000);
-}
-function cleanUnit(v) {
-  return v === 'item' ? 'item' : 'kg';
-}
-
-function getMemberByUser(userId) {
+function getProfile(userId) {
   return pool.query(
-    `SELECT id, user_id, username, display_name, house_no, phone, is_admin, points_balance, leaderboard_opt_out
-     FROM members WHERE user_id = $1`, [userId]
+    `SELECT user_id, username, pickup_area FROM profiles WHERE user_id = $1`,
+    [userId]
   ).then(r => r.rows[0] || null);
 }
 
-// Every authenticated /api request lazily provisions the caller's member row
-// (balance 0, resident). Production-shaped: nothing seeds real visitors.
+// Every authenticated /api request lazily provisions the caller's profile
+// row. Production-shaped: nothing seeds real visitors.
 app.use('/api', (req, res, next) => {
   if (!req.user) return next();
   pool.query(
-    `INSERT INTO members (user_id, username) VALUES ($1, $2) ON CONFLICT (user_id) DO NOTHING`,
+    `INSERT INTO profiles (user_id, username) VALUES ($1, $2)
+     ON CONFLICT (user_id) DO UPDATE SET username = EXCLUDED.username`,
     [req.user.id, req.user.username]
   ).then(() => next(), next);
 });
-
-// Admin (waste bank manager) gate. Loads the caller's member row onto
-// req.member for the routes that need it.
-async function requireAdmin(req, res, next) {
-  try {
-    if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
-    const member = await getMemberByUser(req.user.id);
-    if (!member || !member.is_admin) return res.status(403).json({ error: 'manager_only' });
-    req.member = member;
-    next();
-  } catch (err) { next(err); }
-}
 
 function intParam(req, name) {
   const v = parseInt(req.params[name], 10);
@@ -513,828 +603,431 @@ function cleanInt(v, min, max) {
   return i;
 }
 
-function memberJson(m) {
+// One of a fixed set of ids, or an error naming the field.
+function cleanChoice(v, allowed, field) {
+  const s = typeof v === 'string' ? v.trim() : '';
+  if (!allowed.has(s)) throw new ApiError(400, 'invalid_' + field);
+  return s;
+}
+
+// Metres along the neighborhood street between two pickup areas, or null
+// when either side has no area set.
+function distanceBetween(a, b) {
+  const i = ZONE_IDS.indexOf(a);
+  const j = ZONE_IDS.indexOf(b);
+  if (i < 0 || j < 0) return null;
+  return Math.abs(i - j) * ZONE_SPACING_M;
+}
+
+// The JSON shape of one item, seen by `viewer` (a token's claims or null).
+function itemJson(row, viewer, viewerArea) {
   return {
-    id: m.id,
-    username: m.username,
-    display_name: m.display_name,
-    house_no: m.house_no,
-    phone: m.phone,
-    is_admin: m.is_admin,
-    points_balance: m.points_balance,
-    leaderboard_opt_out: m.leaderboard_opt_out === true,
+    id: row.id,
+    title: row.title,
+    description: row.description,
+    condition: row.item_condition,
+    category: row.category,
+    pickup_area: row.pickup_area,
+    listing_type: row.listing_type,
+    price: row.price,
+    status: row.status,
+    owner_username: row.owner_username,
+    reserved_username: row.status === 'reserved' ? row.reserved_username : null,
+    photo_url: row.photo_url || null,
+    is_mine: !!(viewer && row.owner_id === viewer.id),
+    hidden: row.hidden === true,
+    distance_m: distanceBetween(viewerArea, row.pickup_area),
+    created_at: row.created_at,
   };
 }
 
-// ── Me ──────────────────────────────────────────────────────────────────────
+// ── Me / options ────────────────────────────────────────────────────────────
 
 app.get('/api/me', async (req, res, next) => {
   try {
-    const setupConfigured = !!ADMIN_SETUP_CODE;
-    if (!req.user) return res.json({ guest: true, member: null, setup_configured: setupConfigured });
-    const m = await getMemberByUser(req.user.id);
-    if (!m) throw new ApiError(500, 'member_missing');
-    const stats = await pool.query(`
-      SELECT COALESCE(SUM(i.weight_g), 0) AS total_weight_g, COUNT(DISTINCT d.id) AS deposit_count
-      FROM deposits d JOIN deposit_items i ON i.deposit_id = d.id
-      WHERE d.member_id = $1 AND d.voided = FALSE
-    `, [m.id]);
+    const options = {
+      zones: ZONES,
+      categories: CATEGORIES,
+      conditions: CONDITIONS,
+      listing_types: LISTING_TYPES,
+    };
+    if (!req.user) return res.json({ guest: true, profile: null, options });
+    const p = await getProfile(req.user.id);
     res.json({
-      member: memberJson(m),
-      setup_configured: setupConfigured,
-      stats: {
-        total_weight_g: parseInt(stats.rows[0].total_weight_g, 10),
-        deposit_count: parseInt(stats.rows[0].deposit_count, 10),
-      },
+      guest: false,
+      profile: { username: p ? p.username : req.user.username, pickup_area: p ? p.pickup_area : null },
+      options,
     });
   } catch (err) { next(err); }
 });
 
 app.patch('/api/me', async (req, res, next) => {
   try {
-    const m = await getMemberByUser(req.user.id);
-    // Fields sent in the body are SET (an empty string clears them); fields
-    // left out keep their current value.
-    await pool.query(`
-      UPDATE members SET
-        display_name = $2, house_no = $3, phone = $4, leaderboard_opt_out = $5
-      WHERE id = $1
-    `, [m.id,
-        'display_name' in req.body ? cleanText(req.body.display_name, 120) : m.display_name,
-        'house_no' in req.body ? cleanText(req.body.house_no, 120) : m.house_no,
-        'phone' in req.body ? cleanText(req.body.phone, 40) : m.phone,
-        // Boolean, never a "clear": set only when the body carries it.
-        'leaderboard_opt_out' in req.body ? req.body.leaderboard_opt_out === true : m.leaderboard_opt_out === true]);
-    res.json({ member: memberJson(await getMemberByUser(req.user.id)) });
+    let area = null;
+    if ('pickup_area' in req.body && req.body.pickup_area !== null && req.body.pickup_area !== '') {
+      area = cleanChoice(req.body.pickup_area, new Set(ZONE_IDS), 'pickup_area');
+    }
+    await pool.query(`UPDATE profiles SET pickup_area = $2 WHERE user_id = $1`, [req.user.id, area]);
+    const p = await getProfile(req.user.id);
+    res.json({ profile: { username: p.username, pickup_area: p.pickup_area } });
   } catch (err) { next(err); }
 });
 
-// One-time self-promotion for the neighborhood's first waste bank manager.
-app.post('/api/admin/setup', async (req, res, next) => {
+// ── The feed ────────────────────────────────────────────────────────────────
+
+// Everything still looking for a home, newest first. `category` and `type`
+// narrow it; the viewing person's pickup area turns into a walk distance.
+app.get('/api/items', async (req, res, next) => {
   try {
-    if (!ADMIN_SETUP_CODE) throw new ApiError(400, 'setup_not_configured');
-    const code = typeof req.body.code === 'string' ? req.body.code : '';
-    const a = Buffer.from(code);
-    const b = Buffer.from(ADMIN_SETUP_CODE);
-    const ok = a.length === b.length && crypto.timingSafeEqual(a, b);
-    if (!ok) throw new ApiError(403, 'invalid_code');
-    await pool.query(`UPDATE members SET is_admin = TRUE WHERE user_id = $1`, [req.user.id]);
-    res.json({ ok: true });
-  } catch (err) { next(err); }
-});
-
-// ── Waste types (prices) ────────────────────────────────────────────────────
-
-app.get('/api/waste-types', async (req, res, next) => {
-  try {
-    const me = req.user ? await getMemberByUser(req.user.id) : null;
-    const showAll = !!(me && me.is_admin) && req.query.all === '1';
-    const { rows } = await pool.query(`
-      SELECT id, name, points_per_kg, unit, active FROM waste_types
-      ${showAll ? '' : 'WHERE active = TRUE'}
-      ORDER BY name
-    `);
-    res.json({ waste_types: rows });
-  } catch (err) { next(err); }
-});
-
-app.post('/api/waste-types', requireAdmin, async (req, res, next) => {
-  try {
-    const name = cleanText(req.body.name, 120);
-    const ppk = cleanInt(req.body.points_per_kg, 0, 1000000);
-    if (!name) throw new ApiError(400, 'name_required');
-    if (ppk === null) throw new ApiError(400, 'invalid_points_per_kg');
-    const { rows } = await pool.query(
-      `INSERT INTO waste_types (name, points_per_kg, unit) VALUES ($1, $2, $3) RETURNING id, name, points_per_kg, unit, active`,
-      [name, ppk, cleanUnit(req.body.unit)]
-    );
-    res.status(201).json({ waste_type: rows[0] });
-  } catch (err) { next(err); }
-});
-
-app.patch('/api/waste-types/:id', requireAdmin, async (req, res, next) => {
-  try {
-    const id = intParam(req, 'id');
-    const name = cleanText(req.body.name, 120);
-    const ppk = 'points_per_kg' in req.body ? cleanInt(req.body.points_per_kg, 0, 1000000) : undefined;
-    const active = 'active' in req.body ? !!req.body.active : undefined;
-    const unit = 'unit' in req.body ? cleanUnit(req.body.unit) : null;
-    if (req.body.name !== undefined && !name) throw new ApiError(400, 'name_required');
-    if (ppk === null) throw new ApiError(400, 'invalid_points_per_kg');
-    const { rows } = await pool.query(`
-      UPDATE waste_types SET
-        name = COALESCE($2, name),
-        points_per_kg = COALESCE($3, points_per_kg),
-        active = COALESCE($4, active),
-        unit = COALESCE($5, unit)
-      WHERE id = $1
-      RETURNING id, name, points_per_kg, unit, active
-    `, [id, name, ppk === undefined ? null : ppk, active === undefined ? null : active, unit]);
-    if (!rows.length) throw new ApiError(404, 'waste_type_not_found');
-    res.json({ waste_type: rows[0] });
-  } catch (err) { next(err); }
-});
-
-// ── Rewards ─────────────────────────────────────────────────────────────────
-
-app.get('/api/rewards', async (req, res, next) => {
-  try {
-    const me = req.user ? await getMemberByUser(req.user.id) : null;
-    const showAll = !!(me && me.is_admin) && req.query.all === '1';
-    const { rows } = await pool.query(`
-      SELECT id, name, points_cost, stock, active FROM rewards
-      ${showAll ? '' : 'WHERE active = TRUE'}
-      ORDER BY points_cost, name
-    `);
-    res.json({ rewards: rows });
-  } catch (err) { next(err); }
-});
-
-app.post('/api/rewards', requireAdmin, async (req, res, next) => {
-  try {
-    const name = cleanText(req.body.name, 120);
-    const cost = cleanInt(req.body.points_cost, 0, 100000000);
-    const stock = cleanInt(req.body.stock, 0, 1000000);
-    if (!name) throw new ApiError(400, 'name_required');
-    if (cost === null || stock === null) throw new ApiError(400, 'invalid_reward');
-    const { rows } = await pool.query(
-      `INSERT INTO rewards (name, points_cost, stock) VALUES ($1, $2, $3)
-       RETURNING id, name, points_cost, stock, active`,
-      [name, cost, stock]
-    );
-    res.status(201).json({ reward: rows[0] });
-  } catch (err) { next(err); }
-});
-
-app.patch('/api/rewards/:id', requireAdmin, async (req, res, next) => {
-  try {
-    const id = intParam(req, 'id');
-    const name = cleanText(req.body.name, 120);
-    const cost = 'points_cost' in req.body ? cleanInt(req.body.points_cost, 0, 100000000) : undefined;
-    const stock = 'stock' in req.body ? cleanInt(req.body.stock, 0, 1000000) : undefined;
-    const active = 'active' in req.body ? !!req.body.active : undefined;
-    if (req.body.name !== undefined && !name) throw new ApiError(400, 'name_required');
-    if (cost === null || stock === null) throw new ApiError(400, 'invalid_reward');
-    const { rows } = await pool.query(`
-      UPDATE rewards SET
-        name = COALESCE($2, name),
-        points_cost = COALESCE($3, points_cost),
-        stock = COALESCE($4, stock),
-        active = COALESCE($5, active)
-      WHERE id = $1
-      RETURNING id, name, points_cost, stock, active
-    `, [id, name, cost === undefined ? null : cost, stock === undefined ? null : stock,
-        active === undefined ? null : active]);
-    if (!rows.length) throw new ApiError(404, 'reward_not_found');
-    res.json({ reward: rows[0] });
-  } catch (err) { next(err); }
-});
-
-// Redeem: deduct points, decrement stock, open a pending redemption — all in
-// one locked transaction, so a double-tap or two neighbors racing for the
-// last item can never oversell it or spend points twice.
-app.post('/api/rewards/:id/redeem', async (req, res, next) => {
-  try {
-    const id = intParam(req, 'id');
-    const result = await withTx(async (client) => {
-      const m = await client.query(`SELECT * FROM members WHERE user_id = $1 FOR UPDATE`, [req.user.id]);
-      const member = m.rows[0];
-      const r = await client.query(`SELECT * FROM rewards WHERE id = $1 FOR UPDATE`, [id]);
-      const reward = r.rows[0];
-      if (!reward) throw new ApiError(404, 'reward_not_found');
-      if (!reward.active) throw new ApiError(409, 'reward_unavailable');
-      if (reward.stock <= 0) throw new ApiError(409, 'out_of_stock');
-      if (member.points_balance < reward.points_cost) {
-        throw new ApiError(409, 'insufficient_balance', {
-          needed: reward.points_cost - member.points_balance,
-        });
-      }
-      const up = await client.query(
-        `UPDATE members SET points_balance = points_balance - $1 WHERE id = $2 RETURNING points_balance`,
-        [reward.points_cost, member.id]
-      );
-      await client.query(`UPDATE rewards SET stock = stock - 1 WHERE id = $1`, [reward.id]);
-      const red = await client.query(
-        `INSERT INTO redemptions (member_id, reward_id, points_spent, created_at)
-         VALUES ($1, $2, $3, $4) RETURNING id, created_at`,
-        [member.id, reward.id, reward.points_cost, req.now]
-      );
-      await client.query(
-        `INSERT INTO point_transactions (member_id, delta, reason, ref_type, ref_id, created_at)
-         VALUES ($1, $2, 'redemption', 'redemption', $3, $4)`,
-        [member.id, -reward.points_cost, red.rows[0].id, req.now]
-      );
-      return {
-        redemption: {
-          id: red.rows[0].id,
-          reward_id: reward.id,
-          reward_name: reward.name,
-          points_spent: reward.points_cost,
-          status: 'pending',
-          created_at: red.rows[0].created_at,
-        },
-        points_balance: up.rows[0].points_balance,
-      };
-    });
-    res.status(201).json(result);
-  } catch (err) { next(err); }
-});
-
-// ── CSV export (manager only) ───────────────────────────────────────────────
-//
-// Hand-rolled RFC 4180: strings are quoted only when they must be, inner
-// quotes are doubled, and names starting with =, +, -, @, tab or CR get a
-// leading apostrophe so a spreadsheet never runs them as formulas.
-
-function csvCell(v) {
-  if (v === null || v === undefined) return '';
-  let s = String(v);
-  if (/^[=+\-@\t\r]/.test(s)) s = "'" + s;
-  if (/["\r\n,]/.test(s)) s = '"' + s.replace(/"/g, '""') + '"';
-  return s;
-}
-
-function csvRow(cells) { return cells.map(csvCell).join(','); }
-
-function sendCsv(res, filename, header, rows) {
-  res.set('Content-Type', 'text/csv; charset=utf-8');
-  res.set('Content-Disposition', 'attachment; filename="' + filename + '"');
-  res.set('Cache-Control', 'no-store');
-  // A BOM keeps Excel reading the file as UTF-8.
-  res.send('﻿' + [csvRow(header), ...rows].join('\r\n') + '\r\n');
-}
-
-// Grams are integer columns; the CSV shows kilograms with their exact
-// value (at most 3 decimals), display only — nothing is stored as a float.
-function kgCell(g) { return g / 1000; }
-
-// YYYY-MM-DD in the viewer's zone, so rows fall on the same day as on
-// screen and sort correctly in a spreadsheet. A bad or missing zone falls
-// back to UTC.
-function csvDate(date, tz) {
-  const opts = { timeZone: 'UTC', year: 'numeric', month: '2-digit', day: '2-digit' };
-  const fmtUTC = () => new Intl.DateTimeFormat('en-CA', opts).format(date);
-  if (!tz || typeof tz !== 'string' || tz.length > 64) return fmtUTC();
-  try {
-    return new Intl.DateTimeFormat('en-CA', Object.assign({}, opts, { timeZone: tz })).format(date);
-  } catch (err) {
-    if (!(err instanceof RangeError)) throw err;
-    return fmtUTC();
-  }
-}
-
-// ── Deposits ────────────────────────────────────────────────────────────────
-
-async function fetchDeposits(where, params, limit) {
-  const { rows } = await pool.query(`
-    SELECT d.id, d.member_id, d.recorded_by, d.total_points, d.voided, d.voided_at, d.created_at,
-           m.display_name, m.username, m.house_no,
-           rm.username AS recorded_by_username
-    FROM deposits d JOIN members m ON m.id = d.member_id
-    LEFT JOIN members rm ON rm.user_id = d.recorded_by
-    ${where ? 'WHERE ' + where : ''}
-    ORDER BY d.created_at DESC, d.id DESC
-    LIMIT $${params.length + 1}
-  `, [...params, limit]);
-  let items = [];
-  if (rows.length) {
-    const ir = await pool.query(
-      `SELECT deposit_id, waste_type_id, label, weight_g, quantity, points
-       FROM deposit_items WHERE deposit_id = ANY($1) ORDER BY id`,
-      [rows.map(r => r.id)]
-    );
-    items = ir.rows;
-  }
-  return rows.map(r => ({
-    id: r.id,
-    member_id: r.member_id,
-    total_points: r.total_points,
-    voided: r.voided,
-    voided_at: r.voided_at,
-    created_at: r.created_at,
-    recorded_by_username: r.recorded_by_username || null,
-    member: { display_name: r.display_name, username: r.username, house_no: r.house_no },
-    items: items.filter(i => i.deposit_id === r.id),
-  }));
-}
-
-// Own history by default (guests get an empty list); admins may look across
-// the neighborhood with ?all=1 or ?member_id=N. ?limit=N caps the count
-// (Home shows the three most recent).
-app.get('/api/deposits', async (req, res, next) => {
-  try {
-    const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 100, 1), 200);
-    const csv = req.query.format === 'csv';
-    let where = null;
+    const where = ['i.hidden = FALSE', `i.status <> 'done'`];
     const params = [];
-    if (req.query.member_id || req.query.all === '1') {
-      const me = req.user ? await getMemberByUser(req.user.id) : null;
-      if (!me || !me.is_admin) throw new ApiError(403, 'manager_only');
-      if (req.query.member_id) { where = 'd.member_id = $1'; params.push(intParamReq(req.query.member_id)); }
-    } else if (csv) {
-      // The CSV export is a manager tool: a resident (or a guest) asking
-      // for it is refused rather than silently given their own history.
-      throw new ApiError(403, 'manager_only');
-    } else if (req.user) {
-      const me = await getMemberByUser(req.user.id);
-      where = 'd.member_id = $1';
-      params.push(me.id);
-    } else {
-      // A guest has no member row: they see no deposit history, never
-      // the neighborhood's.
-      return res.json({ deposits: [] });
+    if (req.query.category && req.query.category !== 'all') {
+      const category = cleanChoice(req.query.category, CATEGORY_IDS, 'category');
+      params.push(category);
+      where.push(`i.category = $${params.length}`);
     }
-    const deposits = await fetchDeposits(where, params, limit);
-    if (csv) {
-      const rows = [];
-      for (const d of deposits) {
-        for (const i of d.items) {
-          rows.push(csvRow([
-            csvDate(d.created_at, req.query.tz),
-            d.id,
-            d.member.display_name || d.member.username || 'Member',
-            i.label,
-            i.quantity == null ? kgCell(i.weight_g) : '',
-            i.quantity == null ? '' : i.quantity,
-            i.points,
-            d.voided ? 'Voided' : 'Recorded',
-          ]));
-        }
-      }
-      return sendCsv(res, 'reloop-deposits-' + csvDate(new Date(), req.query.tz) + '.csv',
-        ['Date', 'Deposit', 'Member', 'Waste type', 'Weight (kg)', 'Pieces', 'Points', 'Status'], rows);
+    if (req.query.type && req.query.type !== 'all') {
+      const type = cleanChoice(req.query.type, LISTING_TYPE_IDS, 'type');
+      params.push(type);
+      where.push(`i.listing_type = $${params.length}`);
     }
-    res.json({ deposits });
+    const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 60, 1), 100);
+    params.push(limit);
+    const { rows } = await pool.query(`
+      SELECT i.*, (SELECT p.url FROM item_photos p
+                   WHERE p.item_id = i.id ORDER BY p.position, p.id LIMIT 1) AS photo_url
+      FROM items i
+      WHERE ${where.join(' AND ')}
+      ORDER BY i.created_at DESC, i.id DESC
+      LIMIT $${params.length}
+    `, params);
+    const profile = req.user ? await getProfile(req.user.id) : null;
+    res.json({ items: rows.map(r => itemJson(r, req.user, profile && profile.pickup_area)) });
   } catch (err) { next(err); }
 });
 
-function intParamReq(v) {
-  const n = parseInt(v, 10);
-  if (!Number.isInteger(n) || n <= 0) throw new ApiError(400, 'invalid_id');
-  return n;
-}
-
-// Admin records a deposit for a member. Points are computed here from the
-// CURRENT price and snapshotted, so later price edits never reprice history.
-app.post('/api/deposits', requireAdmin, async (req, res, next) => {
+app.get('/api/items/:id', async (req, res, next) => {
   try {
-    const memberId = cleanInt(req.body.member_id, 1, 2147483647);
-    const rawItems = Array.isArray(req.body.items) ? req.body.items : [];
-    if (!memberId) throw new ApiError(400, 'member_required');
-    if (!rawItems.length || rawItems.length > 20) throw new ApiError(400, 'items_required');
-    const typeIds = rawItems.map(i => cleanInt(i && i.waste_type_id, 1, 2147483647));
-    if (typeIds.some(t => t === null)) throw new ApiError(400, 'invalid_item');
-    const types = await pool.query(
-      `SELECT id, name, points_per_kg, unit FROM waste_types WHERE id = ANY($1) AND active = TRUE`,
-      [typeIds]
-    );
-    const byId = new Map(types.rows.map(t => [t.id, t]));
-    const prepared = [];
-    for (const item of rawItems) {
-      const t = byId.get(cleanInt(item.waste_type_id, 1, 2147483647));
-      if (!t) throw new ApiError(400, 'waste_type_unavailable');
-      if (t.unit === 'item') {
-        const quantity = cleanInt(item.quantity, 1, 1000000);
-        if (quantity === null) throw new ApiError(400, 'invalid_quantity');
-        prepared.push({ waste_type_id: t.id, label: t.name, weight_g: 0, quantity, points: quantity * t.points_per_kg });
-        continue;
-      }
-      const weightG = cleanInt(item.weight_g, 1, 1000000000);
-      if (weightG === null) throw new ApiError(400, 'invalid_weight');
-      prepared.push({ waste_type_id: t.id, label: t.name, weight_g: weightG, quantity: null, points: pointsFor(weightG, t.points_per_kg) });
+    const id = intParam(req, 'id');
+    const { rows } = await pool.query(`
+      SELECT i.*, (SELECT p.url FROM item_photos p
+                   WHERE p.item_id = i.id ORDER BY p.position, p.id LIMIT 1) AS photo_url
+      FROM items i WHERE i.id = $1`, [id]);
+    const row = rows[0];
+    if (!row) throw new ApiError(404, 'item_not_found');
+    const isOwner = !!(req.user && row.owner_id === req.user.id);
+    if (row.hidden && !isOwner) throw new ApiError(404, 'item_not_found');
+    const profile = req.user ? await getProfile(req.user.id) : null;
+    const item = itemJson(row, req.user, profile && profile.pickup_area);
+    item.photos = (await pool.query(
+      `SELECT url FROM item_photos WHERE item_id = $1 ORDER BY position, id`, [id]
+    )).rows.map(r => r.url);
+    if (isOwner) {
+      item.requests = (await pool.query(`
+        SELECT id, requester_username, message, status, created_at
+        FROM item_requests WHERE item_id = $1 ORDER BY created_at DESC, id DESC`, [id])).rows;
+    } else if (req.user) {
+      const mine = await pool.query(`
+        SELECT id, message, status, created_at FROM item_requests
+        WHERE item_id = $1 AND requester_id = $2 ORDER BY created_at DESC, id DESC LIMIT 1`,
+        [id, req.user.id]);
+      item.my_request = mine.rows[0] || null;
     }
-    const total = prepared.reduce((s, i) => s + i.points, 0);
-    const result = await withTx(async (client) => {
-      const m = await client.query(`SELECT * FROM members WHERE id = $1 FOR UPDATE`, [memberId]);
-      const member = m.rows[0];
-      if (!member) throw new ApiError(404, 'member_not_found');
-      const d = await client.query(
-        `INSERT INTO deposits (member_id, recorded_by, total_points, created_at)
-         VALUES ($1, $2, $3, $4) RETURNING id, created_at`,
-        [memberId, req.user.id, total, req.now]
-      );
-      const depositId = d.rows[0].id;
-      for (const it of prepared) {
-        await client.query(
-          `INSERT INTO deposit_items (deposit_id, waste_type_id, label, weight_g, quantity, points) VALUES ($1, $2, $3, $4, $5, $6)`,
-          [depositId, it.waste_type_id, it.label, it.weight_g, it.quantity, it.points]
-        );
-      }
-      const up = await client.query(
-        `UPDATE members SET points_balance = points_balance + $1 WHERE id = $2 RETURNING points_balance`,
-        [total, memberId]
-      );
-      await client.query(
-        `INSERT INTO point_transactions (member_id, delta, reason, ref_type, ref_id, created_at)
-         VALUES ($1, $2, 'deposit', 'deposit', $3, $4)`,
-        [memberId, total, depositId, req.now]
-      );
-      return { deposit_id: depositId, created_at: d.rows[0].created_at, balance: up.rows[0].points_balance };
-    });
-    res.status(201).json({ ok: true, deposit_id: result.deposit_id, points_balance: result.balance, total_points: total });
+    res.json({ item });
   } catch (err) { next(err); }
 });
 
-// Void a mistyped deposit: reverse its points. Refused when the member has
-// already spent them — the balance never goes negative.
-app.post('/api/deposits/:id/void', requireAdmin, async (req, res, next) => {
+// Post an item. `photos` are URLs the platform's file storage returned
+// (usernode.uploadFile in the page) — never image bytes, never a data URL
+// from a person's browser.
+app.post('/api/items', async (req, res, next) => {
+  try {
+    const title = cleanText(req.body.title, 120);
+    if (!title) throw new ApiError(400, 'title_required');
+    const description = cleanText(req.body.description, 600);
+    const condition = cleanChoice(req.body.condition, CONDITION_IDS, 'condition');
+    const category = cleanChoice(req.body.category, CATEGORY_IDS, 'category');
+    const pickupArea = cleanChoice(req.body.pickup_area, new Set(ZONE_IDS), 'pickup_area');
+    const listingType = cleanChoice(req.body.listing_type, LISTING_TYPE_IDS, 'listing_type');
+    let price = null;
+    if (listingType === 'cheap') {
+      price = cleanInt(req.body.price, 1, 100000000);
+      if (price === null) throw new ApiError(400, 'invalid_price');
+    }
+    const raw = Array.isArray(req.body.photos) ? req.body.photos.slice(0, 3) : [];
+    const photos = [];
+    for (const u of raw) {
+      if (typeof u !== 'string' || u.length > 1000 || !/^https:\/\//.test(u)) {
+        throw new ApiError(400, 'invalid_photo');
+      }
+      photos.push(u);
+    }
+    const id = await withTx(async (client) => {
+      const ins = await client.query(`
+        INSERT INTO items (owner_id, owner_username, title, description,
+          item_condition, category, pickup_area, listing_type, price, weight_g, created_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+        RETURNING id`,
+        [req.user.id, req.user.username, title, description, condition, category,
+          pickupArea, listingType, price, CATEGORY_WEIGHT_G[category], req.now]);
+      const itemId = ins.rows[0].id;
+      for (let i = 0; i < photos.length; i++) {
+        await client.query(
+          `INSERT INTO item_photos (item_id, url, position) VALUES ($1, $2, $3)`,
+          [itemId, photos[i], i]);
+      }
+      return itemId;
+    });
+    res.status(201).json({ id });
+  } catch (err) { next(err); }
+});
+
+// Mark an item done: it left the house, whether a neighbor here took it or
+// not. A reserved item's accepted request completes with it.
+app.post('/api/items/:id/complete', async (req, res, next) => {
   try {
     const id = intParam(req, 'id');
     await withTx(async (client) => {
-      const d = await client.query(`SELECT * FROM deposits WHERE id = $1 FOR UPDATE`, [id]);
-      const deposit = d.rows[0];
-      if (!deposit) throw new ApiError(404, 'deposit_not_found');
-      if (deposit.voided) throw new ApiError(409, 'already_voided');
-      const m = await client.query(`SELECT * FROM members WHERE id = $1 FOR UPDATE`, [deposit.member_id]);
-      const member = m.rows[0];
-      if (member.points_balance < deposit.total_points) {
-        throw new ApiError(409, 'insufficient_balance_to_void');
-      }
-      await client.query(`UPDATE deposits SET voided = TRUE, voided_at = $2 WHERE id = $1`, [id, req.now]);
+      const it = (await client.query(`SELECT * FROM items WHERE id = $1 FOR UPDATE`, [id])).rows[0];
+      if (!it) throw new ApiError(404, 'item_not_found');
+      if (it.owner_id !== req.user.id) throw new ApiError(403, 'not_your_item');
+      if (it.status === 'done') throw new ApiError(409, 'already_done');
       await client.query(
-        `UPDATE members SET points_balance = points_balance - $1 WHERE id = $2`,
-        [deposit.total_points, member.id]
-      );
+        `UPDATE items SET status = 'done', done_at = $2 WHERE id = $1`, [id, req.now]);
       await client.query(
-        `INSERT INTO point_transactions (member_id, delta, reason, ref_type, ref_id, created_at)
-         VALUES ($1, $2, 'void', 'deposit', $3, $4)`,
-        [member.id, -deposit.total_points, id, req.now]
-      );
+        `UPDATE item_requests SET status = 'completed', resolved_at = $2
+         WHERE item_id = $1 AND status = 'accepted'`, [id, req.now]);
+      // The item is gone; nobody else can still be waiting for it.
+      await client.query(
+        `UPDATE item_requests SET status = 'declined', resolved_at = $2
+         WHERE item_id = $1 AND status = 'pending'`, [id, req.now]);
     });
     res.json({ ok: true });
   } catch (err) { next(err); }
 });
 
-// ── Redemptions ─────────────────────────────────────────────────────────────
-
-app.get('/api/redemptions', async (req, res, next) => {
+// Give a reserved item back to the neighborhood.
+app.post('/api/items/:id/release', async (req, res, next) => {
   try {
-    const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 100, 1), 200);
-    let where = 'r.member_id = $1';
-    const params = [];
-    if (req.query.all === '1') {
-      const me = req.user ? await getMemberByUser(req.user.id) : null;
-      if (!me || !me.is_admin) throw new ApiError(403, 'manager_only');
-      where = null;
-    } else {
-      if (!req.user) return res.json({ redemptions: [] });
-      params.push((await getMemberByUser(req.user.id)).id);
-    }
+    const id = intParam(req, 'id');
+    await withTx(async (client) => {
+      const it = (await client.query(`SELECT * FROM items WHERE id = $1 FOR UPDATE`, [id])).rows[0];
+      if (!it) throw new ApiError(404, 'item_not_found');
+      if (it.owner_id !== req.user.id) throw new ApiError(403, 'not_your_item');
+      if (it.status !== 'reserved') throw new ApiError(409, 'not_reserved');
+      await client.query(
+        `UPDATE items SET status = 'available', reserved_for = NULL, reserved_username = NULL
+         WHERE id = $1`, [id]);
+      await client.query(
+        `UPDATE item_requests SET status = 'cancelled', resolved_at = $2
+         WHERE item_id = $1 AND status = 'accepted'`, [id, req.now]);
+    });
+    res.json({ ok: true });
+  } catch (err) { next(err); }
+});
+
+// Ask for an item, with a short message to its owner.
+app.post('/api/items/:id/requests', async (req, res, next) => {
+  try {
+    const id = intParam(req, 'id');
+    const message = cleanText(req.body.message, 300);
+    if (!message) throw new ApiError(400, 'message_required');
+    await withTx(async (client) => {
+      const it = (await client.query(`SELECT * FROM items WHERE id = $1 FOR UPDATE`, [id])).rows[0];
+      if (!it || it.hidden) throw new ApiError(404, 'item_not_found');
+      if (it.owner_id === req.user.id) throw new ApiError(409, 'own_item');
+      if (it.status !== 'available') throw new ApiError(409, 'item_unavailable');
+      const open = await client.query(
+        `SELECT 1 FROM item_requests WHERE item_id = $1 AND requester_id = $2 AND status = 'pending'`,
+        [id, req.user.id]);
+      if (open.rows.length) throw new ApiError(409, 'already_requested');
+      await client.query(`
+        INSERT INTO item_requests (item_id, requester_id, requester_username, message, created_at)
+        VALUES ($1, $2, $3, $4, $5)`,
+        [id, req.user.id, req.user.username, message, req.now]);
+    });
+    res.status(201).json({ ok: true });
+  } catch (err) { next(err); }
+});
+
+// ── Requests (the owner's and the asker's side) ────────────────────────────
+
+async function loadRequestForOwner(client, id, userId) {
+  const r = (await client.query(
+    `SELECT * FROM item_requests WHERE id = $1 FOR UPDATE`, [id])).rows[0];
+  if (!r) throw new ApiError(404, 'request_not_found');
+  const it = (await client.query(
+    `SELECT * FROM items WHERE id = $1 FOR UPDATE`, [r.item_id])).rows[0];
+  if (!it || it.owner_id !== userId) throw new ApiError(403, 'not_your_item');
+  return { request: r, item: it };
+}
+
+// Accept: this item is reserved for that person; everyone else waiting is
+// declined in the same breath.
+app.post('/api/requests/:id/accept', async (req, res, next) => {
+  try {
+    const id = intParam(req, 'id');
+    await withTx(async (client) => {
+      const { request, item } = await loadRequestForOwner(client, id, req.user.id);
+      if (request.status !== 'pending') throw new ApiError(409, 'already_resolved');
+      if (item.status !== 'available') throw new ApiError(409, 'item_unavailable');
+      await client.query(
+        `UPDATE item_requests SET status = 'accepted', resolved_at = $2 WHERE id = $1`,
+        [id, req.now]);
+      await client.query(
+        `UPDATE item_requests SET status = 'declined', resolved_at = $2
+         WHERE item_id = $1 AND status = 'pending' AND id <> $3`,
+        [request.item_id, req.now, id]);
+      await client.query(
+        `UPDATE items SET status = 'reserved', reserved_for = $2, reserved_username = $3
+         WHERE id = $1`, [request.item_id, request.requester_id, request.requester_username]);
+    });
+    res.json({ ok: true });
+  } catch (err) { next(err); }
+});
+
+app.post('/api/requests/:id/decline', async (req, res, next) => {
+  try {
+    const id = intParam(req, 'id');
+    await withTx(async (client) => {
+      const { request } = await loadRequestForOwner(client, id, req.user.id);
+      if (request.status !== 'pending') throw new ApiError(409, 'already_resolved');
+      await client.query(
+        `UPDATE item_requests SET status = 'declined', resolved_at = $2 WHERE id = $1`,
+        [id, req.now]);
+    });
+    res.json({ ok: true });
+  } catch (err) { next(err); }
+});
+
+app.post('/api/requests/:id/cancel', async (req, res, next) => {
+  try {
+    const id = intParam(req, 'id');
+    await withTx(async (client) => {
+      const r = (await client.query(
+        `SELECT * FROM item_requests WHERE id = $1 FOR UPDATE`, [id])).rows[0];
+      if (!r) throw new ApiError(404, 'request_not_found');
+      if (r.requester_id !== req.user.id) throw new ApiError(403, 'not_your_request');
+      if (r.status !== 'pending') throw new ApiError(409, 'already_resolved');
+      await client.query(
+        `UPDATE item_requests SET status = 'cancelled', resolved_at = $2 WHERE id = $1`,
+        [id, req.now]);
+    });
+    res.json({ ok: true });
+  } catch (err) { next(err); }
+});
+
+// ── Report a post ───────────────────────────────────────────────────────────
+//
+// A post the neighborhood flags three times is hidden everywhere except to
+// its owner, until somebody on the platform's side looks at it.
+app.post('/api/items/:id/report', async (req, res, next) => {
+  try {
+    const id = intParam(req, 'id');
+    const reason = cleanChoice(req.body.reason, REPORT_REASONS, 'reason');
+    const note = cleanText(req.body.note, 200);
+    const hidden = await withTx(async (client) => {
+      const it = (await client.query(`SELECT * FROM items WHERE id = $1 FOR UPDATE`, [id])).rows[0];
+      if (!it) throw new ApiError(404, 'item_not_found');
+      if (it.owner_id === req.user.id) throw new ApiError(403, 'own_item');
+      await client.query(`
+        INSERT INTO item_reports (item_id, reporter_id, reason, note, created_at)
+        VALUES ($1, $2, $3, $4, $5)
+        ON CONFLICT (item_id, reporter_id) DO NOTHING`,
+        [id, req.user.id, reason, note, req.now]);
+      const n = (await client.query(
+        `SELECT COUNT(*)::int AS n FROM item_reports WHERE item_id = $1`, [id])).rows[0].n;
+      if (n >= REPORT_HIDE_AT) {
+        await client.query(`UPDATE items SET hidden = TRUE WHERE id = $1`, [id]);
+        return true;
+      }
+      return false;
+    });
+    res.status(201).json({ ok: true, hidden });
+  } catch (err) { next(err); }
+});
+
+// ── My Loops ────────────────────────────────────────────────────────────────
+
+app.get('/api/my/items', async (req, res, next) => {
+  try {
+    // The auth middleware lets guests through on GET; this list is someone's
+    // own, so it needs an account.
+    if (!req.user) throw new ApiError(401, 'account_required');
     const { rows } = await pool.query(`
-      SELECT r.id, r.member_id, r.reward_id, r.points_spent, r.status, r.created_at, r.resolved_at,
-             w.name AS reward_name, m.display_name, m.username, m.house_no
-      FROM redemptions r
-      JOIN rewards w ON w.id = r.reward_id
-      JOIN members m ON m.id = r.member_id
-      ${where ? 'WHERE ' + where : ''}
-      ORDER BY r.created_at DESC, r.id DESC
-      LIMIT $${params.length + 1}
-    `, [...params, limit]);
+      SELECT i.*, (SELECT p.url FROM item_photos p
+                   WHERE p.item_id = i.id ORDER BY p.position, p.id LIMIT 1) AS photo_url,
+             (SELECT COUNT(*)::int FROM item_requests r
+              WHERE r.item_id = i.id AND r.status = 'pending') AS pending_requests
+      FROM items i
+      WHERE i.owner_id = $1
+      ORDER BY CASE WHEN i.status = 'done' THEN 1 ELSE 0 END,
+               i.created_at DESC, i.id DESC
+    `, [req.user.id]);
+    const profile = await getProfile(req.user.id);
     res.json({
-      redemptions: rows.map(r => ({
-        id: r.id,
-        member_id: r.member_id,
-        reward_id: r.reward_id,
-        reward_name: r.reward_name,
-        points_spent: r.points_spent,
-        status: r.status,
-        created_at: r.created_at,
-        resolved_at: r.resolved_at,
-        member: { display_name: r.display_name, username: r.username, house_no: r.house_no },
+      items: rows.map(r => Object.assign(itemJson(r, req.user, profile && profile.pickup_area), {
+        pending_requests: r.pending_requests,
       })),
     });
   } catch (err) { next(err); }
 });
 
-// Hand the reward over, or cancel it (refund points, return the item to
-// stock — one transaction).
-app.post('/api/redemptions/:id/resolve', requireAdmin, async (req, res, next) => {
+app.get('/api/my/requests', async (req, res, next) => {
   try {
-    const id = intParam(req, 'id');
-    const status = req.body.status;
-    if (status !== 'picked_up' && status !== 'cancelled') throw new ApiError(400, 'invalid_status');
-    await withTx(async (client) => {
-      const r = await client.query(`SELECT * FROM redemptions WHERE id = $1 FOR UPDATE`, [id]);
-      const redemption = r.rows[0];
-      if (!redemption) throw new ApiError(404, 'redemption_not_found');
-      if (redemption.status !== 'pending') throw new ApiError(409, 'already_resolved');
-      if (status === 'picked_up') {
-        await client.query(
-          `UPDATE redemptions SET status = 'picked_up', handled_by = $2, resolved_at = $3 WHERE id = $1`,
-          [id, req.user.id, req.now]
-        );
-        return;
-      }
-      await client.query(
-        `UPDATE members SET points_balance = points_balance + $1 WHERE id = $2`,
-        [redemption.points_spent, redemption.member_id]
-      );
-      await client.query(`UPDATE rewards SET stock = stock + 1 WHERE id = $1`, [redemption.reward_id]);
-      await client.query(
-        `UPDATE redemptions SET status = 'cancelled', handled_by = $2, resolved_at = $3 WHERE id = $1`,
-        [id, req.user.id, req.now]
-      );
-      await client.query(
-        `INSERT INTO point_transactions (member_id, delta, reason, ref_type, ref_id, created_at)
-         VALUES ($1, $2, 'refund', 'redemption', $3, $4)`,
-        [redemption.member_id, redemption.points_spent, id, req.now]
-      );
-    });
-    res.json({ ok: true });
-  } catch (err) { next(err); }
-});
-
-// ── Members (admin) ─────────────────────────────────────────────────────────
-
-app.get('/api/members', requireAdmin, async (req, res, next) => {
-  try {
-    const { rows } = await pool.query(`
-      SELECT m.id, m.username, m.display_name, m.house_no, m.is_admin, m.points_balance, m.created_at,
-             COALESCE(d.deposit_count, 0) AS deposit_count
-      FROM members m
-      LEFT JOIN (
-        SELECT member_id, COUNT(*) AS deposit_count FROM deposits WHERE voided = FALSE GROUP BY member_id
-      ) d ON d.member_id = m.id
-      ORDER BY m.created_at
-    `);
-    res.json({ members: rows });
-  } catch (err) { next(err); }
-});
-
-app.patch('/api/members/:id', requireAdmin, async (req, res, next) => {
-  try {
-    const id = intParam(req, 'id');
-    const { rows } = await pool.query(`SELECT * FROM members WHERE id = $1`, [id]);
-    const target = rows[0];
-    if (!target) throw new ApiError(404, 'member_not_found');
-    if ('is_admin' in req.body && !req.body.is_admin && target.user_id === req.user.id) {
-      throw new ApiError(409, 'cannot_demote_self');
-    }
-    // Fields sent in the body are SET (an empty string clears them); fields
-    // left out keep their current value. is_admin keeps its three-state
-    // handling because it is a boolean, never a "clear".
-    const displayName = 'display_name' in req.body ? cleanText(req.body.display_name, 120) : target.display_name;
-    const houseNo = 'house_no' in req.body ? cleanText(req.body.house_no, 120) : target.house_no;
-    const phone = 'phone' in req.body ? cleanText(req.body.phone, 40) : target.phone;
-    const isAdmin = 'is_admin' in req.body ? !!req.body.is_admin : target.is_admin;
-    await pool.query(`
-      UPDATE members SET
-        display_name = $2, house_no = $3, phone = $4, is_admin = $5
-      WHERE id = $1
-    `, [id, displayName, houseNo, phone, isAdmin]);
-    const updated = await pool.query(`
-      SELECT m.id, m.username, m.display_name, m.house_no, m.phone, m.is_admin, m.points_balance FROM members m WHERE id = $1
-    `, [id]);
-    res.json({ member: memberJson(updated.rows[0]) });
-  } catch (err) { next(err); }
-});
-
-// ── Report (admin) ──────────────────────────────────────────────────────────
-
-// Neighborhood-level aggregates for the manager's Report tab. Voided
-// deposits count nowhere; by_type groups on the price-name snapshot
-// (deposit_items.label) so retired waste types still show their history.
-async function buildReport() {
-  const [dep, byType, misc] = await Promise.all([
-    // Waste, points and active members across all live deposits.
-    pool.query(`
-      SELECT COALESCE(SUM(i.weight_g), 0) AS waste_g,
-             COALESCE(SUM(i.points), 0) AS points_issued,
-             COUNT(DISTINCT d.member_id) AS members_active
-      FROM deposit_items i
-      JOIN deposits d ON d.id = i.deposit_id
-      WHERE d.voided = FALSE
-    `),
-    // Per waste type, grouped by the label snapshotted at record time.
-    pool.query(`
-      SELECT i.label, SUM(i.weight_g) AS weight_g, SUM(i.quantity) AS quantity, SUM(i.points) AS points,
-             COUNT(DISTINCT i.deposit_id) AS deposits
-      FROM deposit_items i
-      JOIN deposits d ON d.id = i.deposit_id
-      WHERE d.voided = FALSE
-      GROUP BY i.label
-      ORDER BY SUM(i.weight_g) DESC, SUM(i.points) DESC
-    `),
-    // Members, redemption and ledger-side figures in one pass.
-    pool.query(`
-      SELECT (SELECT COUNT(*) FROM members) AS members_total,
-             (SELECT COALESCE(SUM(points_balance), 0) FROM members) AS points_in_circulation,
-             (SELECT COALESCE(SUM(points_spent), 0) FROM redemptions WHERE status = 'picked_up') AS points_redeemed,
-             (SELECT COALESCE(SUM(points_spent), 0) FROM redemptions WHERE status = 'pending') AS points_pending
-    `),
-  ]);
-  const m = misc.rows[0];
-  return {
-    waste_g: parseInt(dep.rows[0].waste_g, 10),
-    points_issued: parseInt(dep.rows[0].points_issued, 10),
-    members_active: parseInt(dep.rows[0].members_active, 10),
-    members_total: parseInt(m.members_total, 10),
-    points_in_circulation: parseInt(m.points_in_circulation, 10),
-    points_redeemed: parseInt(m.points_redeemed, 10),
-    points_pending: parseInt(m.points_pending, 10),
-    by_type: byType.rows.map(r => ({
-      label: r.label,
-      weight_g: parseInt(r.weight_g, 10),
-      quantity: r.quantity === null ? null : parseInt(r.quantity, 10),
-      points: parseInt(r.points, 10),
-      deposits: parseInt(r.deposits, 10),
-    })),
-  };
-}
-
-app.get('/api/report', requireAdmin, async (req, res, next) => {
-  try {
-    const report = await buildReport();
-    if (req.query.format === 'csv') {
-      // The manager's file of the report: the By waste type list as shown.
-      const rows = report.by_type.map(r => csvRow([
-        r.label,
-        // A per-item group sums to 0 grams and shows only its Pieces.
-        r.weight_g ? kgCell(r.weight_g) : '',
-        r.quantity === null ? '' : r.quantity,
-        r.points,
-        r.deposits,
-      ]));
-      return sendCsv(res, 'reloop-report-' + csvDate(new Date(), req.query.tz) + '.csv',
-        ['Waste type', 'Weight (kg)', 'Pieces', 'Points', 'Deposits'], rows);
-    }
-    res.json({ report });
-  } catch (err) { next(err); }
-});
-
-// ── Neighborhood totals + monthly leaderboard (signed-in members) ──────────
-//
-// Home's "Recycled by the neighborhood" section. Aggregates only: no member
-// id, username, house number, phone or points balance ever leaves the server
-// here — the leaderboard carries a first name and kilograms, nothing else.
-// Voided deposits count nowhere and per-item lines (quantity set) carry no
-// kilograms, so both are filtered out of every figure.
-app.get('/api/neighbourhood', async (req, res, next) => {
-  try {
-    // The auth middleware lets guests through on GET, so the route checks
-    // this itself: totals need an account, like the points card.
     if (!req.user) throw new ApiError(401, 'account_required');
-    // Month boundary from `req.now` (never SQL NOW()): a staging preview
-    // opened as of another moment must show that month.
-    const monthStart = "date_trunc('month', $1::timestamptz)";
-    const [tot, byType, board] = await Promise.all([
-      pool.query(`
-        SELECT COALESCE(SUM(i.weight_g) FILTER (WHERE d.created_at >= ${monthStart}), 0) AS month_g,
-               COALESCE(SUM(i.weight_g), 0) AS all_time_g,
-               ${monthStart} AS month_start
-        FROM deposit_items i JOIN deposits d ON d.id = i.deposit_id
-        WHERE d.voided = FALSE AND i.quantity IS NULL
-      `, [req.now]),
-      // Per waste type, all time, grouped on the label snapshotted at record
-      // time (matches /api/report).
-      pool.query(`
-        SELECT i.label, SUM(i.weight_g) AS weight_g
-        FROM deposit_items i JOIN deposits d ON d.id = i.deposit_id
-        WHERE d.voided = FALSE AND i.quantity IS NULL
-        GROUP BY i.label
-        HAVING SUM(i.weight_g) > 0
-        ORDER BY SUM(i.weight_g) DESC, i.label
-      `),
-      pool.query(`
-        SELECT SUM(i.weight_g) AS weight_g, m.display_name, m.username
-        FROM deposit_items i
-        JOIN deposits d ON d.id = i.deposit_id
-        JOIN members m ON m.id = d.member_id
-        WHERE d.voided = FALSE AND i.quantity IS NULL
-          AND d.created_at >= ${monthStart}
-          AND m.leaderboard_opt_out IS NOT TRUE
-        GROUP BY m.id, m.display_name, m.username
-        HAVING SUM(i.weight_g) > 0
-        ORDER BY SUM(i.weight_g) DESC
-        LIMIT 10
-      `, [req.now]),
-    ]);
-    // First name only: the first word of the display name, else of the
-    // username. Never a full name, house number or phone.
-    const firstName = (r) =>
-      ((cleanText(r.display_name, 120) || r.username).trim().split(/\s+/)[0] || '').slice(0, 40);
+    const { rows } = await pool.query(`
+      SELECT r.id AS request_id, r.message, r.status AS request_status,
+             r.created_at AS requested_at,
+             i.id AS item_id, i.title, i.status AS item_status, i.pickup_area,
+             i.owner_username, i.listing_type, i.category, i.price,
+             (SELECT p.url FROM item_photos p
+              WHERE p.item_id = i.id ORDER BY p.position, p.id LIMIT 1) AS photo_url
+      FROM item_requests r
+      JOIN items i ON i.id = r.item_id
+      WHERE r.requester_id = $1 AND i.hidden = FALSE
+      ORDER BY r.created_at DESC, r.id DESC
+    `, [req.user.id]);
     res.json({
-      neighbourhood: {
-        month_start: tot.rows[0].month_start,
-        month_g: parseInt(tot.rows[0].month_g, 10),
-        all_time_g: parseInt(tot.rows[0].all_time_g, 10),
-        by_type: byType.rows.map(r => ({
-          label: r.label,
-          weight_g: parseInt(r.weight_g, 10),
-        })),
-        leaderboard: board.rows
-          .map(r => ({ name: firstName(r), weight_g: parseInt(r.weight_g, 10) }))
-          .sort((a, b) => b.weight_g - a.weight_g || a.name.localeCompare(b.name))
-          .map((r, i) => ({ rank: i + 1, name: r.name, weight_g: r.weight_g })),
+      requests: rows.map(r => ({
+        id: r.request_id,
+        message: r.message,
+        status: r.request_status,
+        requested_at: r.requested_at,
+        item: {
+          id: r.item_id,
+          title: r.title,
+          status: r.item_status,
+          pickup_area: r.pickup_area,
+          owner_username: r.owner_username,
+          listing_type: r.listing_type,
+          category: r.category,
+          price: r.price,
+          photo_url: r.photo_url,
+        },
+      })),
+    });
+  } catch (err) { next(err); }
+});
+
+// ── Impact ──────────────────────────────────────────────────────────────────
+//
+// A completed loop is an item marked done that this person posted or
+// received. The kilograms are the category estimate of each such item.
+app.get('/api/impact', async (req, res, next) => {
+  try {
+    if (!req.user) throw new ApiError(401, 'account_required');
+    const { rows } = await pool.query(`
+      SELECT COUNT(*)::int AS loops, COALESCE(SUM(weight_g), 0)::bigint AS weight_g
+      FROM items
+      WHERE status = 'done' AND (owner_id = $1 OR reserved_for = $1)
+    `, [req.user.id]);
+    res.json({
+      impact: {
+        loops: rows[0].loops,
+        weight_g: parseInt(rows[0].weight_g, 10),
       },
     });
-  } catch (err) { next(err); }
-});
-
-// ── Collection schedule ─────────────────────────────────────────────────────
-//
-// Managers set which weekdays the waste bank opens and one time window for
-// them; everyone (guests included) sees the next collection on Home. The
-// next one is worked out in the viewer's time zone (`?tz=`, IANA, from the
-// browser; a bad or missing zone falls back to UTC) as of `req.now`.
-
-const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
-const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-
-function cleanZone(tz) {
-  if (!tz || typeof tz !== 'string' || tz.length > 64) return 'UTC';
-  try {
-    new Intl.DateTimeFormat('en-US', { timeZone: tz });
-    return tz;
-  } catch (err) {
-    if (!(err instanceof RangeError)) throw err;
-    return 'UTC';
-  }
-}
-
-function minutesOf(hhmm) {
-  const [h, m] = hhmm.split(':').map(Number);
-  return h * 60 + m;
-}
-
-// The next opening on or after `now` in zone `tz`: today counts until its
-// closing time. Returns the local date ('YYYY-MM-DD'), its weekday and the
-// window, or null when no day is set.
-function nextCollection(schedule, now, tz) {
-  if (!schedule || !schedule.days.length) return null;
-  const parts = {};
-  for (const p of new Intl.DateTimeFormat('en-US', {
-    timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit',
-    hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
-  }).formatToParts(now)) parts[p.type] = p.value;
-  const nowMin = Number(parts.hour) * 60 + Number(parts.minute);
-  const today = Date.UTC(Number(parts.year), Number(parts.month) - 1, Number(parts.day));
-  for (let d = 0; d <= 7; d++) {
-    const day = new Date(today + d * 86400000);
-    const weekday = day.getUTCDay();
-    if (!schedule.days.includes(weekday)) continue;
-    if (d === 0 && nowMin >= minutesOf(schedule.close_time)) continue;
-    return {
-      date: day.toISOString().slice(0, 10),
-      weekday: WEEKDAYS[weekday],
-      days_from_today: d,
-      open_time: schedule.open_time,
-      close_time: schedule.close_time,
-      open_now: d === 0 && nowMin >= minutesOf(schedule.open_time),
-    };
-  }
-  return null;
-}
-
-// A fixed schedule for `?demo=1` on a staging preview, never stored, so the
-// populated card can be seen before any manager has set one.
-const DEMO_SCHEDULE = { days: [3, 6], open_time: '08:00', close_time: '10:00' };
-
-async function loadSchedule() {
-  const { rows } = await pool.query(
-    `SELECT days, open_time, close_time FROM collection_schedule WHERE id = 1`);
-  if (!rows.length) return null;
-  return { days: rows[0].days.map(Number).sort((a, b) => a - b), open_time: rows[0].open_time, close_time: rows[0].close_time };
-}
-
-function scheduleJson(schedule, req, demo) {
-  const tz = cleanZone(req.query.tz);
-  return { schedule, next: nextCollection(schedule, req.now, tz), time_zone: tz, demo: !!demo };
-}
-
-app.get('/api/schedule', async (req, res, next) => {
-  try {
-    const demo = IS_STAGING && req.query.demo === '1';
-    res.json(scheduleJson(demo ? DEMO_SCHEDULE : await loadSchedule(), req, demo));
-  } catch (err) { next(err); }
-});
-
-app.put('/api/schedule', requireAdmin, async (req, res, next) => {
-  try {
-    const body = req.body || {};
-    const days = Array.isArray(body.days) ? body.days : null;
-    if (!days || !days.length) throw new ApiError(400, 'days_required');
-    if (!days.every(d => Number.isInteger(d) && d >= 0 && d <= 6)) throw new ApiError(400, 'invalid_days');
-    const clean = [...new Set(days)];
-    const open = typeof body.open_time === 'string' ? body.open_time.trim() : '';
-    const close = typeof body.close_time === 'string' ? body.close_time.trim() : '';
-    if (!HHMM.test(open) || !HHMM.test(close)) throw new ApiError(400, 'invalid_time');
-    if (minutesOf(open) >= minutesOf(close)) throw new ApiError(400, 'close_before_open');
-    clean.sort((a, b) => a - b);
-    await pool.query(`
-      INSERT INTO collection_schedule (id, days, open_time, close_time, updated_at)
-      VALUES (1, $1, $2, $3, NOW())
-      ON CONFLICT (id) DO UPDATE SET days = EXCLUDED.days, open_time = EXCLUDED.open_time,
-        close_time = EXCLUDED.close_time, updated_at = NOW()
-    `, [clean, open, close]);
-    res.json(scheduleJson(await loadSchedule(), req, false));
-  } catch (err) { next(err); }
-});
-
-app.delete('/api/schedule', requireAdmin, async (req, res, next) => {
-  try {
-    await pool.query(`DELETE FROM collection_schedule WHERE id = 1`);
-    res.json(scheduleJson(null, req, false));
   } catch (err) { next(err); }
 });
 

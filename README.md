@@ -1,87 +1,52 @@
 # ReLoop — Return. Reuse. Reward.
 
-A digital waste bank (bank sampah) for an Indonesian RT/RW neighborhood.
-Residents bring sorted waste to the neighborhood waste bank; the waste bank
-manager weighs it and records the deposit, points land in the resident's
-balance, and residents redeem points for rewards. Managers set waste-type
-prices, manage the roster and the reward catalog, and hand out redemptions.
+A neighborhood exchange for an Indonesian RT/RW community. Neighbors post
+things they no longer need — offered free, to swap, or cheap — and ask each
+other for them, so usable goods move to a new home instead of becoming waste.
 
-## How it works
+## What people can do
 
-**Residents** (everyone signed in through Homeroom):
+**Home** is the feed: the neighborhood's items, newest first, with a photo,
+title, condition and how far the pickup area is from your own. Filter by
+category (clothes, electronics, furniture, books, kitchen) and by type
+(Free, Swap, Cheap).
 
-- **Home** — current points balance, how much has been recycled so far, the
-  three most recent deposits, what the **neighborhood** has recycled together
-  (kilograms this month and all time, by waste type) and the **monthly
-  leaderboard** (kilograms only, first names only), plus how the loop works.
-- **Deposits** — deposit history with the full per-waste-type breakdown.
-- **Price list** — opened from Home: every waste type the waste bank accepts
-  and its points per kilogram (or per item), read-only and always current.
-- **Rewards** — the catalog with stock; redeem points and track the pickup
-  (Waiting for pickup / Picked up / Cancelled — cancelled redemptions refund
-  the points automatically).
-- **Profile** — display name, house number and optional phone; the
-  **leaderboard opt-out** (untick to leave the monthly leaderboard; your
-  kilograms still count in the totals); plus the one-time **waste bank
-  manager setup** (below).
+**Post an item** takes up to three photos, a title, a short description, the
+condition (like new, good, worn), a category, the pickup area (the RT) and
+whether it is Free, Swap or Cheap (with a rupiah price).
 
-**Waste bank managers** (the **Admin** tab):
+**Item detail** shows the photos, description and who posted it. Anyone else
+can press **Request this item** and send the owner a short message; the owner
+accepts (the item becomes Reserved) or declines. The owner marks it Done once
+it has changed hands.
 
-- **Record deposit** — pick a member, add waste lines, save. Points are
-  computed on the server from the current price and snapshotted, so later
-  price edits never reprice old deposits.
-- **Deposits** — everything recorded across the neighborhood, filterable by
-  member; a mistyped deposit can be voided (blocked if the points were
-  already spent, so a balance never goes negative). **Download CSV** exports
-  the whole history for the current member filter, one row per waste line
-  (date, resident, house number, waste type, weight in kg or item count,
-  points, and whether it was voided).
-- **Members** — the roster with balances; edit details, promote or demote
-  managers (you can't demote yourself).
-- **Prices** — waste types and their points per kilogram; retiring a type
-  hides it from new deposits but keeps it on old ones.
-- **Rewards** — the catalog: name, points cost, stock, show/hide.
-- **Redemption queue** — mark pickups as handed over, or cancel (refund +
-  restock).
-- **Report** — the neighborhood at a glance: total waste collected, points
-  issued and redeemed, the roster size, and a per-waste-type rollup. Voided
-  deposits count nowhere. **Download CSV** exports the same summary figures
-  and per-waste-type rollup.
+**My Loops** holds the two sides of your activity: My items (with their
+status — Available, Reserved, Done — and how many requests are waiting) and
+My requests (with their answer).
 
-## Becoming the first manager
+**Impact** counts the loops you completed and the kilograms of waste they
+kept out of the bin, with a badge for every five completed loops.
 
-The first manager promotes themselves once: on **Profile → Waste bank
-manager setup**, enter the shared setup code. The code is the app's
-`ADMIN_SETUP_CODE` secret, configured through the platform's Secrets UI —
-agree on it with your neighborhood when the app is set up; it is never shown
-in the app. After that, managers manage each other from the Members screen.
+**Profile** sets your pickup area, which the feed uses to show distance.
+
+Every item also has a **Report** action; a post reported by three different
+neighbors is hidden everywhere except from its owner until it is reviewed.
 
 ## Data conventions
 
-- All point values are integers; weights are stored as **integer grams** —
-  no floats anywhere.
-- Per deposit line: `points = floor(weight_g × points_per_kg / 1000)`.
-- Every balance change writes a `point_transactions` ledger row in the same
-  transaction, so balances always reconcile.
-- `members`, `deposits`, `deposit_items`, `redemptions` and
-  `point_transactions` are **private** tables (`staging:private`): balances
-  are financial data and phone numbers are personal. `waste_types` and
-  `rewards` are public reference data.
-
-## Out of scope for the MVP
-
-Multiple waste banks per app instance, Rupiah/cash payouts, photo proof and
-QR check-in, pickup scheduling, notifications, resident
-self-reporting of deposits, and offline mode.
-
-Waste bank managers can download the deposits list and the Report tab as
-CSV files (a "Download CSV" button on each), for RT/RW reporting and
-spreadsheets; the export follows the member filter in use and is
-manager-only.
+- Items carry an estimated weight in **integer grams**, taken from their
+  category, so Impact can report kilograms without asking anyone to weigh
+  anything.
+- `items` and `item_photos` are public (the neighborhood's listings);
+  `profiles`, `item_requests` and `item_reports` are private
+  (`staging:private`).
+- Photos live in the platform's file storage; the app stores only their URLs.
+- The tables of the earlier waste-bank product (members, deposits, rewards,
+  …) are kept so existing history is never destroyed, but nothing reads them
+  any more.
 
 ## Running it
 
 - `npm ci` then `npm run build` (compiles the Tailwind stylesheet).
 - `npm start` — needs `DATABASE_URL`, and the platform-injected
   `USERNODE_*` variables when running inside Homeroom.
-- `ADMIN_SETUP_CODE` — the manager setup secret (see above).

@@ -1,61 +1,49 @@
 {
-  "description": "Digital waste bank app for neighborhoods to track and manage recyclable waste",
-  "secrets": [
-    {
-      "key": "ADMIN_SETUP_CODE",
-      "description": "One-time setup code the neighborhood's first waste bank manager enters on the Profile screen to claim the manager role. Leave the value empty to disable manager setup entirely.",
-      "required": true,
-      "private": true,
-      "staging_default": "staging-demo-setup"
-    }
-  ],
+  "description": "Give, swap and sell second-hand items with your neighbors",
+  "secrets": [],
   "tests": [
     {
-      "name": "Home renders the points card",
+      "name": "Home shows the feed",
       "path": "/",
-      "expectText": "Points"
+      "expectText": "Nearby items"
     },
     {
-      "name": "Home shows the neighborhood totals and leaderboard",
+      "name": "Home shows a seeded item",
       "path": "/",
-      "expectText": "Recycled by the neighborhood"
+      "expectText": "Staging demo: Denim jacket"
     },
     {
-      "name": "Rewards catalog renders with stock",
-      "path": "/#/rewards",
-      "expectText": "Staging demo reward"
+      "name": "Item detail offers a request",
+      "path": "/#/item/9000101",
+      "expectText": "Request this item"
     },
     {
-      "name": "Deposits shows the honest empty state",
-      "path": "/#/deposits",
-      "expectText": "No deposits yet"
+      "name": "Post an item form renders",
+      "path": "/#/post",
+      "expectText": "Post an item"
     },
     {
-      "name": "Prices list renders the seeded waste types",
-      "path": "/#/prices",
-      "expectText": "pts per kg"
+      "name": "My Loops renders with its tabs",
+      "path": "/#/loops",
+      "expectText": "My Loops"
     },
     {
-      "name": "Profile renders",
+      "name": "Impact shows the reuse figures",
+      "path": "/#/impact",
+      "expectText": "Items reused"
+    },
+    {
+      "name": "Profile shows the pickup area setting",
       "path": "/#/profile",
-      "expectText": "Profile"
+      "expectText": "Pickup area"
     },
     {
-      "name": "Home shows the next collection section",
+      "id": "feed.browse",
+      "name": "Browse the neighborhood feed",
       "path": "/",
-      "expectText": "Next collection"
-    },
-    {
-      "name": "Home shows the next collection time from a schedule",
-      "path": "/?demo=1",
-      "expectText": "08:00–10:00"
-    },
-    {
-      "id": "resident-browse",
-      "name": "Resident browse: home and rewards",
-      "path": "/",
+      "expectText": "Nearby items",
       "visual": true,
-      "impact": ["public/**", "server.js"]
+      "impact": ["public/**", "server.js", "styles/**"]
     }
   ],
   "icon": {
