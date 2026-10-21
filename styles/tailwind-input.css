@@ -28,31 +28,24 @@
  * --un-accent-contrast at the accent and on-accent tokens.
  */
 @layer base {
-  :root {
-    --ground: 250 250 249;    /* the page */
-    --surface: 255 255 255;   /* lists, cards, fields */
-    --raised: 245 245 244;    /* hovers, badges */
-    --fg: 28 25 23;           /* text */
-    --muted: 87 83 78;        /* secondary text */
-    --line: 231 229 228;      /* borders, dividers, skeletons */
-    --accent: 15 118 110;     /* the one accent */
-    --on-accent: 255 255 255; /* text on the accent */
-    --danger: 185 28 28;
-    --on-danger: 255 255 255;
-    --focus: 13 148 136;      /* the keyboard focus ring */
-  }
+  /* ReLoop has ONE fixed look, a warm dark one (see "## Design" in
+   * CLAUDE.md): the product was asked for dark and a dark market shelf is
+   * the point. Both :root and .dark carry the same values, so the app
+   * looks the same whatever theme the viewer's Homeroom is in, and the
+   * theme script in public/index.html has nothing to switch. */
+  :root,
   .dark {
-    --ground: 12 10 9;
-    --surface: 28 25 23;
-    --raised: 41 37 36;
-    --fg: 245 245 244;
-    --muted: 168 162 158;
-    --line: 68 64 60;
-    --accent: 45 212 191;
-    --on-accent: 4 47 46;
+    --ground: 12 10 9;        /* the page */
+    --surface: 28 25 23;      /* lists, cards, fields */
+    --raised: 41 37 36;       /* hovers, badges, photo placeholders */
+    --fg: 245 245 244;        /* text */
+    --muted: 168 162 158;     /* secondary text */
+    --line: 68 64 60;         /* borders, dividers, skeletons */
+    --accent: 45 212 191;     /* the one accent: primary actions, Free */
+    --on-accent: 4 47 46;     /* text on the accent */
     --danger: 248 113 113;
     --on-danger: 69 10 10;
-    --focus: 94 234 212;
+    --focus: 94 234 212;      /* the keyboard focus ring */
   }
   /* el.hidden = true hides an element even when a class gives it a display
      (flex, the components below). */
@@ -107,6 +100,18 @@
   /* The label above a section: sentence case, never uppercase or tracked. */
   .section-label {
     @apply mb-2 px-1 text-small font-medium text-muted;
+  }
+
+  /* Filter and tab chips: a row of single-choice buttons (feed category and
+     type, My Loops tabs). The chosen one is aria-pressed="true". 44 px tall
+     so a tap lands, and never a raw colour: tokens only. */
+  .chip {
+    @apply inline-flex min-h-11 items-center justify-center rounded-full border border-line bg-surface px-4
+      text-small font-medium text-muted focus-visible:outline-none focus-visible:ring-2
+      focus-visible:ring-focus focus-visible:ring-offset-2 focus-visible:ring-offset-ground;
+  }
+  .chip[aria-pressed='true'] {
+    @apply border-accent bg-accent/15 text-accent;
   }
 
   /* The bottom tab bar: the app's one fixed navigation. Each button is a

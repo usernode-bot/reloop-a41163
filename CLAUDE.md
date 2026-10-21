@@ -100,40 +100,48 @@ tables you've marked private), etc.
 
 ## About ReLoop
 
-Digital waste bank app for neighborhoods to track and manage recyclable waste
+A neighborhood exchange for giving, swapping and selling second-hand items,
+so usable goods stay in use instead of becoming waste.
 
-ReLoop ("Return. Reuse. Reward.") is the deposit book of a bank sampah — an
-Indonesian RT/RW neighborhood waste bank — in app form. Residents bring
-sorted waste to the waste bank, the waste bank manager weighs it and records
-the deposit, points land in the resident's balance, and points are redeemed
-for rewards picked up at the waste bank. The manager owns the prices, the
-roster and the catalog; residents own their history and balance.
+ReLoop ("Return. Reuse. Reward.") is an Indonesian RT/RW neighborhood's
+exchange in app form. A neighbor posts something they no longer need — free,
+to swap, or cheap — with up to three photos, a condition and the RT where it
+can be picked up. Other neighbors browse the feed, open an item and send the
+owner a short message asking for it; the owner accepts (the item is Reserved)
+or declines. When it has changed hands the owner marks it Done. Each completed
+"loop" counts in Impact: items reused, estimated kilograms of waste avoided,
+and a badge every five loops. One post is one loop; the feed, My Loops and
+Impact are the whole product.
 
 ## Design
 
-This app's look. The first real version fills in the blanks; every later
-change follows it, and updates it when a request changes the look on purpose.
+This app's look. Every change follows it, and updates it when a request
+changes the look on purpose.
 
-- **Palette:** the kit's defaults, kept: one teal accent on warm neutrals
-  (stone greys); danger red for errors only. Suits the recycling subject —
-  no re-theming was wanted.
-- **Signature element:** the Home points card — a full-width card with the
-  balance in `text-title` and a small looping-arrows mark, reading like the
-  deposit book of a bank sampah.
+- **One fixed dark look, deliberately.** The product was asked for a dark
+  theme, so both the `:root` and `.dark` token sets in
+  `styles/tailwind-input.css` carry the same warm dark values and the theme
+  script in `public/index.html` just adds `.dark` and sets
+  `color-scheme: dark`. Do not add a light look or a theme picker without a
+  request that asks for one.
+- **Palette:** one teal accent (`--accent`) on warm dark neutrals; danger red
+  for errors only. Category marks and photos carry the only other colour.
+- **Signature element:** the feed card — a photo tile with the type pill
+  (Free in the accent, Swap/Cheap on the surface) over its top-left corner,
+  the title under it and one muted line: condition · area · distance. Two
+  columns on a phone.
 - **Type scale:** `text-title`, `text-heading`, `text-body`, `text-small`
   _(change their sizes in `tailwind.config.js` if you must, not their number)_
-- Navigation is a bottom tab bar (`.tab-nav`/`.tab-btn`, the kit's only added
-  component): Home, Deposits, Rewards, Profile, plus Admin for managers.
-  Statuses are `bg-raised` pill badges; the words are fixed: Points, deposit,
-  waste type, price, reward, redeem, redemption, stock, balance, member,
-  waste bank manager, void.
+- Navigation is a bottom tab bar (`.tab-nav`/`.tab-btn`): Home, Post, Loops,
+  Impact, Profile.
+- The words are fixed: item, post, request, loop, Free, Swap, Cheap, like new,
+  good, worn, Available, Reserved, Done, pickup area, waste avoided.
 
-The kit is in `styles/tailwind-input.css`: colour tokens with a light and
-a dark value (named in `tailwind.config.js`), and a few components
-(`btn-primary`, `btn-secondary`, `field`, `list` and `list-row`,
-`card`, `section-label`, `skeleton`, `state-empty`, `state-error`).
-Re-theme by changing the token values there, keeping every text pair at
-4.5:1 or more in both looks.
+The kit is in `styles/tailwind-input.css`: colour tokens (named in
+`tailwind.config.js`), and a few components (`btn-primary`, `btn-secondary`,
+`field`, `list` and `list-row`, `card`, `section-label`, `chip`, `skeleton`,
+`state-empty`, `state-error`). Re-theme by changing the token values there,
+keeping every text pair at 4.5:1 or more.
 
 - Colour comes only from the tokens (`bg-ground`, `bg-surface`,
   `text-fg`, `text-muted`, `border-line`, `bg-accent` with
@@ -148,29 +156,41 @@ Re-theme by changing the token values there, keeping every text pair at
 
 ## App-specific conventions
 
-- **Integers only for points and weights.** Point values are integers;
-  weights are stored as **integer grams** in `deposit_items.weight_g`. UI
-  inputs are kilograms with decimals and convert to grams; never store a
-  float.
-- **Points are computed server-side** at record time:
-  `points = floor(weight_g × points_per_kg / 1000)`, snapshotted onto
-  `deposit_items` and `deposits`. Price edits never reprice history.
-- **Every balance change writes a `point_transactions` ledger row in the
-  same transaction** as the balance update. Balances never go negative:
-  voids and refunds check the balance first.
-- **Private tables:** `members`, `deposits`, `deposit_items`, `redemptions`,
-  `point_transactions` are `staging:private` (balances are financial data,
-  phone numbers personal). `waste_types` and `rewards` stay public. The
-  Home leaderboard ranks **kilograms only, first names only**, with an
-  opt-out on Profile (`members.leaderboard_opt_out`) — it never shows a
-  points balance, a house number or a full name.
-- **The first waste bank manager** promotes themselves once with
-  `ADMIN_SETUP_CODE` (a dapp.json secret) on the Profile screen; after that,
-  managers promote/demote each other, and self-demotion is refused so the
-  neighborhood can't lock itself out of admin.
-- **Deposits are recorded by managers only**; residents never record their
-  own (no self-reporting in the MVP).
-- **One neighborhood per app instance** — no multi-bank support; don't add a
-  bank/waste-bank dimension to the schema without revisiting every table.
-- UI copy is English with Indonesian domain terms (bank sampah, RT/RW); a
-  full Bahasa Indonesia pass would go through `req.user.locale`.
+- **Integers only for money and weights.** Prices are whole rupiah; an
+  item's estimated weight is **integer grams** in `items.weight_g`. Never
+  store a float.
+- **The weight estimate comes from the category** (`CATEGORY_WEIGHT_G` in
+  `server.js`) and is snapshotted on the item when it is posted, so Impact's
+  kilograms never move when the estimate changes later.
+- **Private tables:** `profiles`, `item_requests` and `item_reports` are
+  `staging:private` (a pickup area is personal, a request is a one-to-one
+  message, a report names its reporter). `items` and `item_photos` stay
+  public — they are the neighborhood's listings.
+- **Statuses are server-owned.** `available → reserved → done`, changed only
+  by the owner: accepting a request reserves the item, `release` frees it
+  again, and `complete` marks it done (and completes the accepted request).
+  Every transition runs in one locked transaction.
+- **Distances are walked, not located.** Pickup areas are the RTs of the one
+  neighborhood (`ZONES`), laid along its street; the walk between neighboring
+  RTs is `ZONE_SPACING_M` (150 m). The feed turns the viewer's own pickup
+  area into "≈ N m"; with no area set it shows the area only. No geolocation,
+  no stored coordinates.
+- **Completed loops:** an item marked done that the person posted or
+  received (`owner_id` or `reserved_for`). Impact counts those; a badge is
+  earned every 5.
+- **Photos are platform storage only.** The page uploads with
+  `usernode.uploadFile()` and the server stores just the returned https URL
+  (max 3 per item). Never image bytes in Postgres. Outside the platform shell
+  uploads are unavailable and the form still posts without photos.
+- **Reporting:** any non-owner can report an item once; three distinct
+  reporters hide it (`items.hidden`) from the feed and from everyone but its
+  owner. Hidden items never appear in a list.
+- **One neighborhood per app instance** — no multi-neighborhood support;
+  don't add a neighborhood dimension to the schema without revisiting every
+  table.
+- The earlier waste-bank tables (`members`, `deposits`, `rewards`, …) are
+  kept only so existing history is not destroyed. Nothing reads them; do not
+  build on them, and keep `usernode-user-data.js` erasing a person's rows
+  there.
+- UI copy is English with Indonesian domain terms (RT/RW); a full Bahasa
+  Indonesia pass would go through `req.user.locale`.
