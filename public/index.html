@@ -1539,6 +1539,12 @@
         costIn.placeholder = 'Points';
         const stockIn = numberField('1'); stockIn.value = existing ? existing.stock : '';
         stockIn.placeholder = 'Stock';
+        const thrIn = numberField('1');
+        thrIn.value = existing && existing.low_stock_threshold != null ? existing.low_stock_threshold : '';
+        thrIn.placeholder = '5';
+        const thrWrap = el('div', 'flex flex-col gap-1');
+        thrWrap.append(thrIn, el('span', 'text-small text-muted',
+          'Flagged in Admin when stock is at or below this. Leave blank for 5.'));
         const active = existing ? checkbox('Shown in the catalog', existing.active) : null;
         return editorPanel({
           title: existing ? 'Edit reward' : 'Add reward',
@@ -1546,13 +1552,17 @@
             { label: 'Name', input: nameIn },
             { label: 'Points cost', input: costIn },
             { label: 'Stock', input: stockIn },
+            { label: 'Low stock threshold', input: thrWrap },
           ],
           active,
           saveLabel: existing ? 'Save reward' : 'Add reward',
           noteBox,
           onBack: () => draw(),
           onSubmit: async () => {
-            const body = { name: nameIn.value, points_cost: costIn.value, stock: stockIn.value };
+            const body = {
+              name: nameIn.value, points_cost: costIn.value, stock: stockIn.value,
+              low_stock_threshold: thrIn.value,
+            };
             if (active) body.active = active.box.checked;
             try {
               if (existing) await api('/api/rewards/' + existing.id, { method: 'PATCH', body: JSON.stringify(body) });
@@ -1561,7 +1571,7 @@
             } catch (e) {
               noteBox.replaceChildren(banner(
                 e.code === 'name_required' ? 'Give the reward a name.' :
-                e.code === 'invalid_reward' ? 'Points cost and stock must be numbers of 0 or more.' :
+                e.code === 'invalid_reward' ? 'Points cost, stock and low stock threshold must be numbers of 0 or more.' :
                 'Saving failed. Try again.', true));
             }
           },
@@ -1592,6 +1602,8 @@
               left.append(el('p', 'text-body font-medium', r.name),
                 el('p', 'text-small text-muted', fmt(r.points_cost) + ' pts · ' + fmt(r.stock) + ' in stock'));
               const right = el('div', 'flex shrink-0 items-center gap-2');
+              if (r.stock <= 0) right.append(badge('Out of stock'));
+              else if (r.stock <= r.low_stock_at) right.append(badge('Low stock'));
               if (!r.active) right.append(badge('Hidden'));
               b.append(left, right);
               b.addEventListener('click', () => root.replaceChildren(editPanel(r)));

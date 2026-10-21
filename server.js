@@ -162,6 +162,10 @@ app.use((req, res, next) => {
 // role. Declared in dapp.json's secrets; unset value = setup not available.
 const ADMIN_SETUP_CODE = process.env.ADMIN_SETUP_CODE || '';
 
+// Rewards whose stock is at or below their threshold are flagged in Admin.
+// A reward without a threshold of its own uses this default.
+const LOW_STOCK_DEFAULT = 5;
+
 // An error with an HTTP status and a stable code the frontend can show a
 // sentence for. Anything else is an unexpected failure and answers 500.
 class ApiError extends Error {
@@ -217,6 +221,8 @@ async function migrate() {
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `);
+  // Per-reward low-stock alert threshold; NULL = the default (5).
+  await pool.query(`ALTER TABLE rewards ADD COLUMN IF NOT EXISTS low_stock_threshold INTEGER`);
   await pool.query(`
     CREATE TABLE IF NOT EXISTS members (
       id SERIAL PRIMARY KEY,
@@ -332,6 +338,7 @@ async function seedStaging() {
     [900003, 'Staging demo reward: Bath soap', 120, 50],
     [900004, 'Staging demo reward: Eggs (10)', 250, 0],
     [900005, 'Staging demo reward: Reusable bag', 60, 30],
+    [900006, 'Staging demo reward: Dish soap', 90, 3],
   ];
   for (const [id, name, cost, stock] of rewards) {
     await pool.query(
@@ -637,12 +644,25 @@ app.patch('/api/waste-types/:id', requireAdmin, async (req, res, next) => {
 
 // ── Rewards ─────────────────────────────────────────────────────────────────
 
+// The effective threshold, so callers don't have to know the default.
+const REWARD_COLUMNS = `id, name, points_cost, stock, active, low_stock_threshold,
+  COALESCE(low_stock_threshold, ${LOW_STOCK_DEFAULT}) AS low_stock_at`;
+
+// Blank / missing clears the threshold back to the default; anything else must
+// be a whole number of 0 or more.
+function cleanThreshold(v) {
+  if (v === undefined || v === null || (typeof v === 'string' && v.trim() === '')) return null;
+  const i = cleanInt(v, 0, 1000000);
+  if (i === null) throw new ApiError(400, 'invalid_reward');
+  return i;
+}
+
 app.get('/api/rewards', async (req, res, next) => {
   try {
     const me = req.user ? await getMemberByUser(req.user.id) : null;
     const showAll = !!(me && me.is_admin) && req.query.all === '1';
     const { rows } = await pool.query(`
-      SELECT id, name, points_cost, stock, active FROM rewards
+      SELECT ${REWARD_COLUMNS} FROM rewards
       ${showAll ? '' : 'WHERE active = TRUE'}
       ORDER BY points_cost, name
     `);
@@ -655,12 +675,13 @@ app.post('/api/rewards', requireAdmin, async (req, res, next) => {
     const name = cleanText(req.body.name, 120);
     const cost = cleanInt(req.body.points_cost, 0, 100000000);
     const stock = cleanInt(req.body.stock, 0, 1000000);
+    const threshold = cleanThreshold(req.body.low_stock_threshold);
     if (!name) throw new ApiError(400, 'name_required');
     if (cost === null || stock === null) throw new ApiError(400, 'invalid_reward');
     const { rows } = await pool.query(
-      `INSERT INTO rewards (name, points_cost, stock) VALUES ($1, $2, $3)
-       RETURNING id, name, points_cost, stock, active`,
-      [name, cost, stock]
+      `INSERT INTO rewards (name, points_cost, stock, low_stock_threshold) VALUES ($1, $2, $3, $4)
+       RETURNING ${REWARD_COLUMNS}`,
+      [name, cost, stock, threshold]
     );
     res.status(201).json({ reward: rows[0] });
   } catch (err) { next(err); }
@@ -673,6 +694,10 @@ app.patch('/api/rewards/:id', requireAdmin, async (req, res, next) => {
     const cost = 'points_cost' in req.body ? cleanInt(req.body.points_cost, 0, 100000000) : undefined;
     const stock = 'stock' in req.body ? cleanInt(req.body.stock, 0, 1000000) : undefined;
     const active = 'active' in req.body ? !!req.body.active : undefined;
+    // COALESCE can't clear a value, so the threshold is set behind a flag:
+    // absent key leaves it alone, blank/null resets it to the default.
+    const hasThreshold = 'low_stock_threshold' in req.body;
+    const threshold = hasThreshold ? cleanThreshold(req.body.low_stock_threshold) : null;
     if (req.body.name !== undefined && !name) throw new ApiError(400, 'name_required');
     if (cost === null || stock === null) throw new ApiError(400, 'invalid_reward');
     const { rows } = await pool.query(`
@@ -680,11 +705,12 @@ app.patch('/api/rewards/:id', requireAdmin, async (req, res, next) => {
         name = COALESCE($2, name),
         points_cost = COALESCE($3, points_cost),
         stock = COALESCE($4, stock),
-        active = COALESCE($5, active)
+        active = COALESCE($5, active),
+        low_stock_threshold = CASE WHEN $6 THEN $7 ELSE low_stock_threshold END
       WHERE id = $1
-      RETURNING id, name, points_cost, stock, active
+      RETURNING ${REWARD_COLUMNS}
     `, [id, name, cost === undefined ? null : cost, stock === undefined ? null : stock,
-        active === undefined ? null : active]);
+        active === undefined ? null : active, hasThreshold, threshold]);
     if (!rows.length) throw new ApiError(404, 'reward_not_found');
     res.json({ reward: rows[0] });
   } catch (err) { next(err); }

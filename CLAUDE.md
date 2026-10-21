@@ -168,6 +168,10 @@ Re-theme by changing the token values there, keeping every text pair at
   `ADMIN_SETUP_CODE` (a dapp.json secret) on the Profile screen; after that,
   managers promote/demote each other, and self-demotion is refused so the
   neighborhood can't lock itself out of admin.
+- **Low-stock alerts:** rewards carry a nullable `low_stock_threshold`
+  (NULL means the default of 5); Admin flags a reward "Low stock" at or
+  below it and "Out of stock" at 0. It is display-only — redeeming is
+  still refused only when stock is 0.
 - **Deposits are recorded by managers only**; residents never record their
   own (no self-reporting in the MVP).
 - **One neighborhood per app instance** — no multi-bank support; don't add a
