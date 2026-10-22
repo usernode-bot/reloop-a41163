@@ -1,87 +1,81 @@
-# ReLoop — Return. Reuse. Reward.
+# ReLoop
 
-A digital waste bank (bank sampah) for an Indonesian RT/RW neighborhood.
-Residents bring sorted waste to the neighborhood waste bank; the waste bank
-manager weighs it and records the deposit, points land in the resident's
-balance, and residents redeem points for rewards. Managers set waste-type
-prices, manage the roster and the reward catalog, and hand out redemptions.
+Give. Swap. Reuse.
 
-## How it works
+ReLoop is the neighborhood's reuse board: a place where neighbors give away,
+swap or cheaply sell second-hand things so they stay in use instead of becoming
+waste. It runs on [Homeroom](https://app.onhomeroom.com); people sign in through
+the platform, and the app is one neighborhood, RT 01 to RT 08.
 
-**Residents** (everyone signed in through Homeroom):
+## Screens
 
-- **Home** — current points balance, how much has been recycled so far, the
-  three most recent deposits, what the **neighborhood** has recycled together
-  (kilograms this month and all time, by waste type) and the **monthly
-  leaderboard** (kilograms only, first names only), plus how the loop works.
-- **Deposits** — deposit history with the full per-waste-type breakdown.
-- **Price list** — opened from Home: every waste type the waste bank accepts
-  and its points per kilogram (or per item), read-only and always current.
-- **Rewards** — the catalog with stock; redeem points and track the pickup
-  (Waiting for pickup / Picked up / Cancelled — cancelled redemptions refund
-  the points automatically).
-- **Profile** — display name, house number and optional phone; the
-  **leaderboard opt-out** (untick to leave the monthly leaderboard; your
-  kilograms still count in the totals); plus the one-time **waste bank
-  manager setup** (below).
+- **Home**: a two-column feed of nearby items, each with a photo, title,
+  condition and pickup area, and how far that is from your own area. Filter by
+  category (Clothes, Electronics, Furniture, Books, Kitchen) and by type (Free,
+  Swap, Cheap). **Post an item** is the primary action.
+- **Post an Item**: up to 3 photos, title, short description, condition, category,
+  pickup area and Free, Swap or Price. Photos are shrunk in the browser and
+  uploaded to Homeroom's file storage; posting without photos shows bundled
+  category art instead.
+- **Item Detail**: photos, description, owner and distance. Ask for the item with
+  a short message, cancel your request, or report the item. The owner sees the
+  requests and accepts one, which reserves the item; they then mark the handover
+  done or make it available again.
+- **My Loops**: **My Items** and **My Requests**, with each item's status
+  (Available, Reserved, Done) and where each request stands.
+- **Impact**: your completed loops, an estimate of the kilograms of waste they
+  avoided (typical weight per category), a badge for every 5 loops, and the same
+  two figures for the whole neighborhood.
+- **Profile**: display name and pickup area, plus the one-time moderator setup.
+- **Moderate** (moderators only): reported items to hide or keep, and the roster
+  of moderators.
 
-**Waste bank managers** (the **Admin** tab):
+Distance is derived from fixed pickup areas, not from location tracking: an item
+in the same area reads "In your area", otherwise a number of blocks between
+areas. Until you set your pickup area, items show only their area.
 
-- **Record deposit** — pick a member, add waste lines, save. Points are
-  computed on the server from the current price and snapshotted, so later
-  price edits never reprice old deposits.
-- **Deposits** — everything recorded across the neighborhood, filterable by
-  member; a mistyped deposit can be voided (blocked if the points were
-  already spent, so a balance never goes negative). **Download CSV** exports
-  the whole history for the current member filter, one row per waste line
-  (date, resident, house number, waste type, weight in kg or item count,
-  points, and whether it was voided).
-- **Members** — the roster with balances; edit details, promote or demote
-  managers (you can't demote yourself).
-- **Prices** — waste types and their points per kilogram; retiring a type
-  hides it from new deposits but keeps it on old ones.
-- **Rewards** — the catalog: name, points cost, stock, show/hide.
-- **Redemption queue** — mark pickups as handed over, or cancel (refund +
-  restock).
-- **Report** — the neighborhood at a glance: total waste collected, points
-  issued and redeemed, the roster size, and a per-waste-type rollup. Voided
-  deposits count nowhere. **Download CSV** exports the same summary figures
-  and per-waste-type rollup.
+## Moderation
 
-## Becoming the first manager
+People post text and photos, so every item that is not your own offers **Report
+this item** with a reason and an optional note. The neighborhood's moderators
+(the old waste bank manager role, promoted with `ADMIN_SETUP_CODE`) review
+reports in Moderate and can **Hide item**, which removes it from the feed for
+everyone except its owner, or **Keep** it. Moderators promote and demote each
+other and cannot demote themselves.
 
-The first manager promotes themselves once: on **Profile → Waste bank
-manager setup**, enter the shared setup code. The code is the app's
-`ADMIN_SETUP_CODE` secret, configured through the platform's Secrets UI —
-agree on it with your neighborhood when the app is set up; it is never shown
-in the app. After that, managers manage each other from the Members screen.
+## Data model
 
-## Data conventions
+| Table | Contents | Privacy |
+| --- | --- | --- |
+| `items` | posted items; owners are Homeroom user ids, no FK | public |
+| `item_photos` | stored photo URLs and positions, up to 3 per item | public |
+| `item_requests` | a neighbor's message and its status | `staging:private` |
+| `item_reports` | reports of an item and how a moderator resolved them | `staging:private` |
+| `members` | display name, pickup area, moderator flag | `staging:private` |
 
-- All point values are integers; weights are stored as **integer grams** —
-  no floats anywhere.
-- Per deposit line: `points = floor(weight_g × points_per_kg / 1000)`.
-- Every balance change writes a `point_transactions` ledger row in the same
-  transaction, so balances always reconcile.
-- `members`, `deposits`, `deposit_items`, `redemptions` and
-  `point_transactions` are **private** tables (`staging:private`): balances
-  are financial data and phone numbers are personal. `waste_types` and
-  `rewards` are public reference data.
+The old waste bank tables (`waste_types`, `rewards`, `deposits`,
+`deposit_items`, `redemptions`, `point_transactions`, `collection_schedule`) are
+left in place and unused, so existing deposit history is not destroyed.
 
-## Out of scope for the MVP
+User-posted titles, descriptions and messages are rendered with `textContent`,
+never as HTML. Image bytes are never stored in Postgres; only the file storage
+URL and id.
 
-Multiple waste banks per app instance, Rupiah/cash payouts, photo proof and
-QR check-in, pickup scheduling, notifications, resident
-self-reporting of deposits, and offline mode.
+## Staging
 
-Waste bank managers can download the deposits list and the Report tab as
-CSV files (a "Download CSV" button on each), for RT/RW reporting and
-spreadsheets; the export follows the member filter in use and is
-manager-only.
+On `USERNODE_ENV=staging` the app seeds a handful of obviously fake neighbors
+(`910001` to `910006`) and items titled "Staging demo: …", including a reserved
+item, three completed loops, pending requests and one open report. No seed row is
+owned by whoever opens the preview, so My Loops and Impact start at their honest
+empty and zero state.
 
-## Running it
+## Development
 
-- `npm ci` then `npm run build` (compiles the Tailwind stylesheet).
-- `npm start` — needs `DATABASE_URL`, and the platform-injected
-  `USERNODE_*` variables when running inside Homeroom.
-- `ADMIN_SETUP_CODE` — the manager setup secret (see above).
+```sh
+npm ci --include=dev
+npm start          # serves on PORT, needs DATABASE_URL
+npm run build      # compiles styles/tailwind-input.css to public/tailwind.css
+```
+
+`npm run build` also runs in every image build (see `Dockerfile`), so the
+stylesheet always matches this commit's markup.

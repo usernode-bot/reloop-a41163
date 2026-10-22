@@ -1,9 +1,9 @@
 {
-  "description": "Digital waste bank app for neighborhoods to track and manage recyclable waste",
+  "description": "Neighborhood app for giving, swapping and cheaply selling second-hand items so they stay in use",
   "secrets": [
     {
       "key": "ADMIN_SETUP_CODE",
-      "description": "One-time setup code the neighborhood's first waste bank manager enters on the Profile screen to claim the manager role. Leave the value empty to disable manager setup entirely.",
+      "description": "One-time setup code the neighborhood's first moderator enters on the Profile screen to claim the moderator role. Leave the value empty to disable moderator setup entirely.",
       "required": true,
       "private": true,
       "staging_default": "staging-demo-setup"
@@ -11,48 +11,53 @@
   ],
   "tests": [
     {
-      "name": "Home renders the points card",
+      "name": "Home feed shows nearby items",
       "path": "/",
-      "expectText": "Points"
+      "expectText": "Staging demo: Denim jacket"
     },
     {
-      "name": "Home shows the neighborhood totals and leaderboard",
+      "name": "Home shows the type filters",
       "path": "/",
-      "expectText": "Recycled by the neighborhood"
+      "expectText": "Cheap"
     },
     {
-      "name": "Rewards catalog renders with stock",
-      "path": "/#/rewards",
-      "expectText": "Staging demo reward"
+      "name": "Post an Item form renders",
+      "path": "/#/post",
+      "expectText": "Pickup area"
     },
     {
-      "name": "Deposits shows the honest empty state",
-      "path": "/#/deposits",
-      "expectText": "No deposits yet"
+      "name": "Item Detail offers a request",
+      "path": "/#/item/900001",
+      "expectText": "Request this item"
     },
     {
-      "name": "Prices list renders the seeded waste types",
-      "path": "/#/prices",
-      "expectText": "pts per kg"
+      "name": "Item Detail offers a report",
+      "path": "/#/item/900001",
+      "expectText": "Report this item"
     },
     {
-      "name": "Profile renders",
+      "name": "My Loops shows both tabs",
+      "path": "/#/loops",
+      "expectText": "My Requests"
+    },
+    {
+      "name": "My Loops honest empty state",
+      "path": "/#/loops",
+      "expectText": "No items posted yet"
+    },
+    {
+      "name": "Impact shows the estimate",
+      "path": "/#/impact",
+      "expectText": "Estimated kg of waste avoided"
+    },
+    {
+      "name": "Profile shows the pickup area",
       "path": "/#/profile",
-      "expectText": "Profile"
+      "expectText": "Pickup area"
     },
     {
-      "name": "Home shows the next collection section",
-      "path": "/",
-      "expectText": "Next collection"
-    },
-    {
-      "name": "Home shows the next collection time from a schedule",
-      "path": "/?demo=1",
-      "expectText": "08:00–10:00"
-    },
-    {
-      "id": "resident-browse",
-      "name": "Resident browse: home and rewards",
+      "id": "community-browse",
+      "name": "Community browse",
       "path": "/",
       "visual": true,
       "impact": ["public/**", "server.js"]

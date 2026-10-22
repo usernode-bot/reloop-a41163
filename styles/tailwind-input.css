@@ -109,6 +109,18 @@
     @apply mb-2 px-1 text-small font-medium text-muted;
   }
 
+  /* A filter or choice chip: the kit has nothing for a toggle, so this is
+     the one added component. 44 px tall, rounded; the pressed chip takes the
+     accent like the active tab. */
+  .chip {
+    @apply inline-flex min-h-11 shrink-0 items-center rounded-full border border-line bg-surface px-4 text-small text-fg
+      focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus focus-visible:ring-offset-2
+      focus-visible:ring-offset-ground;
+  }
+  .chip[aria-pressed='true'] {
+    @apply border-accent bg-accent text-on-accent;
+  }
+
   /* The bottom tab bar: the app's one fixed navigation. Each button is a
      44 px+ target; the active tab ([aria-current="page"]) takes the accent. */
   .tab-nav {
