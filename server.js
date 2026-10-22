@@ -231,6 +231,8 @@ async function migrate() {
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `);
+  // Per-reward low-stock alert threshold; NULL = the default (5).
+  await pool.query(`ALTER TABLE rewards ADD COLUMN IF NOT EXISTS low_stock_threshold INTEGER`);
   await pool.query(`
     CREATE TABLE IF NOT EXISTS members (
       id SERIAL PRIMARY KEY,
