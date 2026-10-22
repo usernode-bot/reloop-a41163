@@ -100,81 +100,83 @@ tables you've marked private), etc.
 
 ## About ReLoop
 
-Digital waste bank app for neighborhoods to track and manage recyclable waste
-
-ReLoop ("Return. Reuse. Reward.") is the deposit book of a bank sampah — an
-Indonesian RT/RW neighborhood waste bank — in app form. Residents bring
-sorted waste to the waste bank, the waste bank manager weighs it and records
-the deposit, points land in the resident's balance, and points are redeemed
-for rewards picked up at the waste bank. The manager owns the prices, the
-roster and the catalog; residents own their history and balance.
+ReLoop ("Give. Swap. Reuse.") is a neighborhood app for keeping second-hand
+things in use. Neighbors post what they no longer need (Free, Swap, or a low
+price paid in person at pickup), others ask for it, and the owner accepts one
+request and marks the handover done. Every completed handover is one loop kept
+out of the waste stream. It replaces the old bank sampah deposit book: deposits,
+points, prices, rewards, the leaderboard and the collection schedule are gone
+from the app. Their tables are left in place and unused, so recorded history is
+not destroyed.
 
 ## Design
 
-This app's look. The first real version fills in the blanks; every later
-change follows it, and updates it when a request changes the look on purpose.
-
-- **Palette:** the kit's defaults, kept: one teal accent on warm neutrals
-  (stone greys); danger red for errors only. Suits the recycling subject —
-  no re-theming was wanted.
-- **Signature element:** the Home points card — a full-width card with the
-  balance in `text-title` and a small looping-arrows mark, reading like the
-  deposit book of a bank sampah.
+- **Palette:** the kit's defaults: one teal accent on warm neutrals (stone
+  greys), danger red for errors only. Designed **dark first**; people whose
+  Homeroom theme is light get a legible light look, and outside Homeroom the app
+  opens dark. No theme picker: the viewer's Homeroom setting is the control.
+- **Signature element:** the photo-led item card in the Home feed: a square
+  photo (or bundled category art) with the Free, Swap or price tag on it, then
+  title, "Condition · Area" and the distance.
 - **Type scale:** `text-title`, `text-heading`, `text-body`, `text-small`
   _(change their sizes in `tailwind.config.js` if you must, not their number)_
-- Navigation is a bottom tab bar (`.tab-nav`/`.tab-btn`, the kit's only added
-  component): Home, Deposits, Rewards, Profile, plus Admin for managers.
-  Statuses are `bg-raised` pill badges; the words are fixed: Points, deposit,
-  waste type, price, reward, redeem, redemption, stock, balance, member,
-  waste bank manager, void.
-
-The kit is in `styles/tailwind-input.css`: colour tokens with a light and
-a dark value (named in `tailwind.config.js`), and a few components
-(`btn-primary`, `btn-secondary`, `field`, `list` and `list-row`,
-`card`, `section-label`, `skeleton`, `state-empty`, `state-error`).
-Re-theme by changing the token values there, keeping every text pair at
-4.5:1 or more in both looks.
-
-- Colour comes only from the tokens (`bg-ground`, `bg-surface`,
-  `text-fg`, `text-muted`, `border-line`, `bg-accent` with
-  `text-on-accent`, ...): never a raw hex value or a stock palette class.
-- Tap targets are at least 44 px; the buttons and fields already are.
-- Every screen that loads data has honest loading, empty and error states.
-  Never show the empty state while loading or after a failure; an error says
-  what failed, what still works, and offers Retry.
-- Seed obviously fake staging demo data so the populated screen can be seen
-  ("Staging mock data" in the platform conventions).
-- No cards in cards, no uppercase eyebrows, no emoji as icons.
+- **Components:** the kit in `styles/tailwind-input.css` plus one addition,
+  `.chip`, a 44 px rounded filter/choice pill whose pressed state
+  (`aria-pressed="true"`) takes the accent. Item cards are `.card` with `p-0`
+  and a photo on top; grouped rows elsewhere use `.list`/`.list-row`.
+- **Navigation:** bottom tab bar (`.tab-nav`/`.tab-btn`): Home, My Loops,
+  Impact, Profile, and Moderate for moderators. Posting is a button on Home, not
+  a tab. Statuses are `bg-raised` pill badges.
+- **Words (fixed):** item, post, Post an item, Post item, photo, title, short
+  description, condition (Like new, Good, Worn), category (Clothes,
+  Electronics, Furniture, Books, Kitchen), pickup area, Free, Swap, Price (on the
+  form), Cheap (the filter), request, Request this item, Accept, Decline, Mark
+  as done, Make available again, Cancel request, status (Available, Reserved,
+  Done), My Loops, My Items, My Requests, loop, Impact, items reused, estimated
+  kg of waste avoided, badge, Report this item, moderator, Moderate, Hide item,
+  Keep, Hidden by a moderator.
+- Colour comes only from the tokens; never a raw hex value or a stock palette
+  class. Tap targets are at least 44 px. Every screen that loads data has honest
+  loading, empty and error states. No cards in cards, no uppercase eyebrows, no
+  emoji as icons.
 
 ## App-specific conventions
 
-- **Integers only for points and weights.** Point values are integers;
-  weights are stored as **integer grams** in `deposit_items.weight_g`. UI
-  inputs are kilograms with decimals and convert to grams; never store a
-  float.
-- **Points are computed server-side** at record time:
-  `points = floor(weight_g × points_per_kg / 1000)`, snapshotted onto
-  `deposit_items` and `deposits`. Price edits never reprice history.
-- **Every balance change writes a `point_transactions` ledger row in the
-  same transaction** as the balance update. Balances never go negative:
-  voids and refunds check the balance first.
-- **Private tables:** `members`, `deposits`, `deposit_items`, `redemptions`,
-  `point_transactions` are `staging:private` (balances are financial data,
-  phone numbers personal). `waste_types` and `rewards` stay public. The
-  Home leaderboard ranks **kilograms only, first names only**, with an
-  opt-out on Profile (`members.leaderboard_opt_out`) — it never shows a
-  points balance, a house number or a full name.
-- **The first waste bank manager** promotes themselves once with
-  `ADMIN_SETUP_CODE` (a dapp.json secret) on the Profile screen; after that,
-  managers promote/demote each other, and self-demotion is refused so the
-  neighborhood can't lock itself out of admin.
-- **Low-stock alerts:** rewards carry a nullable `low_stock_threshold`
-  (NULL means the default of 5); Admin flags a reward "Low stock" at or
-  below it and "Out of stock" at 0. It is display-only — redeeming is
-  still refused only when stock is 0.
-- **Deposits are recorded by managers only**; residents never record their
-  own (no self-reporting in the MVP).
-- **One neighborhood per app instance** — no multi-bank support; don't add a
-  bank/waste-bank dimension to the schema without revisiting every table.
-- UI copy is English with Indonesian domain terms (bank sampah, RT/RW); a
-  full Bahasa Indonesia pass would go through `req.user.locale`.
+- **One neighborhood, eight pickup areas.** `AREAS` is `RT 01` to `RT 08` in
+  `server.js` and is returned by `GET /api/me`; never duplicate it in the
+  client. Distance is counted in blocks between areas, never from the phone's
+  location, and nothing shows until the viewer sets an area.
+- **Estimates, always labelled.** `EST_GRAMS` (clothes 500, electronics 2000,
+  furniture 15000, books 1000, kitchen 1000) is a typical weight per category in
+  integer grams. Any "kg of waste avoided" figure must say it is an estimate.
+  A completed loop is an item with `status = 'done'`: it counts once for its
+  owner and once for the accepted requester.
+- **Owners and requesters are Homeroom user ids, stored without a foreign key**
+  (`owner_user_id`, `requester_user_id`, `reporter_user_id`), matching
+  `members.user_id`. That is what lets a later account-deletion handler find
+  their rows. Public tables (`items`, `item_photos`) must never hold a foreign
+  key into a private table.
+- **Private tables:** `members`, `item_requests`, `item_reports` are
+  `staging:private` (request messages and moderation). `items` and
+  `item_photos` are public.
+- **One request per person per item.** The owner accepts one; other pending
+  requests stay pending so a fallback pickup is possible. Accepting and
+  cancelling take a row lock on the item so two taps cannot both win. A done
+  loop cannot be cancelled or reopened.
+- **Photos:** at most 3 per item, shrunk client-side (longest side 1600 px,
+  JPEG 0.85) and uploaded with `usernode.uploadFile()` before the item is
+  posted. Persist only the returned URL and id; never image bytes. A missing or
+  failed photo falls back through `img.onerror` to `/art/<category>.svg`. Seed
+  rows carry no photo rows, so category art shows.
+- **Moderation:** the old waste bank manager role is the moderator role, with
+  the same one-time `ADMIN_SETUP_CODE` setup on Profile. Moderators review
+  reports and can hide an item (it leaves the feed for everyone but its owner and
+  moderators), promote and demote each other, and never demote themselves.
+  Reports key on the item; hiding does not delete photo files.
+- **Seeded staging data uses fake member ids `910001` to `910006`**, kept away
+  from the ids the platform uses for whoever opens a preview. Never seed a row
+  owned by the viewer, and never a signal the app's own logic reads.
+- **Price listings** carry an IDR amount (Rp 1,000 to Rp 1,000,000) paid in
+  person at pickup. ReLoop handles no payments and stores no payment data.
+- UI copy is English with Indonesian neighborhood terms (RT, Rp); a full Bahasa
+  Indonesia pass would go through `req.user.locale`.
